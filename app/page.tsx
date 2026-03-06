@@ -16,20 +16,13 @@ const HABITS_DEFAULT = [
 ];
 
 const WEEK = ["M", "T", "W", "T", "F", "S", "S"];
-
-function generateCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
-
-function getToday() {
-  return new Date().toISOString().split("T")[0];
-}
+function generateCode() { return Math.random().toString(36).substring(2, 8).toUpperCase(); }
+function getToday() { return new Date().toISOString().split("T")[0]; }
 
 export default function Home() {
   const [screen, setScreen] = useState("login");
   const [activeTab, setActiveTab] = useState("home");
   const [habits, setHabits] = useState(HABITS_DEFAULT);
-  const [allCheckedIn, setAllCheckedIn] = useState(false);
   const [toast, setToast] = useState("");
   const [showToast, setShowToast] = useState(false);
   const [email, setEmail] = useState("");
@@ -43,6 +36,7 @@ export default function Home() {
   const [groupMembers, setGroupMembers] = useState<any[]>([]);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showJoinGroup, setShowJoinGroup] = useState(false);
+  const [showGroupDetail, setShowGroupDetail] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [streak, setStreak] = useState(0);
@@ -63,71 +57,68 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (user) { loadGroups(); loadStreak(); }
-  }, [user]);
+  useEffect(() => { if (user) { loadGroups(); loadStreak(); } }, [user]);
 
   const loadStreak = async () => {
     const today = getToday();
-    const { data } = await supabase
-      .from("checkins")
-      .select("date")
-      .eq("user_id", user.id)
-      .order("date", { ascending: false });
-
+    const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).order("date", { ascending: false });
     if (!data || data.length === 0) { setStreak(0); return; }
-
     const checkedToday = data[0].date === today;
     setCheckedInToday(checkedToday);
-    if (checkedToday) setAllCheckedIn(true);
-
+    if (checkedToday) setHabits((prev) => prev.map((h) => ({ ...h, checked: true })));
     let count = 0;
     const current = new Date(today);
     for (const row of data) {
       const d = new Date(row.date);
       const diff = Math.round((current.getTime() - d.getTime()) / 86400000);
-      if (diff === count || (count === 0 && diff === 0)) { count++; current.setDate(current.getDate() - 1); }
-      else break;
+      if (diff === count || (count === 0 && diff === 0)) { count++; current.setDate(current.getDate() - 1); } else break;
     }
     setStreak(count);
-
     const days = [];
     for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
+      const d = new Date(); d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split("T")[0];
       const filled = data.some((r: any) => r.date === dateStr);
-      const isToday = i === 0;
-      days.push({ label: WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1], filled, today: isToday });
+      days.push({ label: WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1], filled, today: i === 0 });
     }
     setWeekDays(days);
   };
 
   const loadGroups = async () => {
-    const { data } = await supabase
-      .from("group_members")
-      .select("group_id, groups(id, group_name, invite_code, created_by)")
-      .eq("user_id", user.id);
-    if (data && data.length > 0) {
-      const g = data.map((d: any) => d.groups);
-      setGroups(g);
-      setCurrentGroup(g[0]);
-      loadMembers(g[0].id);
+    const { data, error } = await supabase.from("group_members").select("group_id").eq("user_id", user.id);
+    if (error || !data || data.length === 0) return;
+    const groupIds = data.map((d: any) => d.group_id);
+    const { data: groupData } = await supabase.from("groups").select("*").in("id", groupIds);
+    if (groupData && groupData.length > 0) {
+      setGroups(groupData);
+      setCurrentGroup(groupData[0]);
+      loadMembers(groupData[0].id);
     }
   };
 
   const loadMembers = async (groupId: string) => {
-    const { data } = await supabase
-      .from("group_members")
-      .select("user_id")
-      .eq("group_id", groupId);
-    if (data) setGroupMembers(data);
+    const { data: memberData } = await supabase.from("group_members").select("user_id").eq("group_id", groupId);
+    if (!memberData) return;
+    const today = getToday();
+    const members = await Promise.all(memberData.map(async (m: any) => {
+      const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", m.user_id).order("date", { ascending: false });
+      const checkedToday = checkins && checkins.length > 0 && checkins[0].date === today;
+      let memberStreak = 0;
+      if (checkins && checkins.length > 0) {
+        const current = new Date(today);
+        for (const row of checkins) {
+          const d = new Date(row.date);
+          const diff = Math.round((current.getTime() - d.getTime()) / 86400000);
+          if (diff === memberStreak || (memberStreak === 0 && diff === 0)) { memberStreak++; current.setDate(current.getDate() - 1); } else break;
+        }
+      }
+      const { data: userData } = await supabase.auth.admin?.listUsers ? { data: null } : { data: null };
+      return { user_id: m.user_id, streak: memberStreak, checkedInToday: checkedToday, isMe: m.user_id === user.id };
+    }));
+    setGroupMembers(members);
   };
 
-  const triggerToast = (msg: string) => {
-    setToast(msg); setShowToast(true);
-    setTimeout(() => setShowToast(false), 2500);
-  };
+  const triggerToast = (msg: string) => { setToast(msg); setShowToast(true); setTimeout(() => setShowToast(false), 2500); };
 
   const handleAuth = async () => {
     setLoading(true);
@@ -142,44 +133,28 @@ export default function Home() {
     setLoading(false);
   };
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    setScreen("login");
-  };
+  const handleSignOut = async () => { await supabase.auth.signOut(); setScreen("login"); };
 
   const createGroup = async () => {
     if (!newGroupName.trim()) return;
     const code = generateCode();
-    const { data, error } = await supabase
-      .from("groups")
-      .insert({ group_name: newGroupName, invite_code: code, created_by: user.id })
-      .select()
-      .single();
+    const { data, error } = await supabase.from("groups").insert({ group_name: newGroupName, invite_code: code, created_by: user.id }).select().single();
     if (error) { triggerToast("❌ Error creating group"); return; }
     await supabase.from("group_members").insert({ group_id: data.id, user_id: user.id });
-    setCurrentGroup(data);
-    setGroups([...groups, data]);
-    setShowCreateGroup(false);
-    setNewGroupName("");
+    setCurrentGroup(data); setGroups([...groups, data]);
+    setShowCreateGroup(false); setNewGroupName("");
     triggerToast("✅ Group created! Code: " + code);
   };
 
   const joinGroup = async () => {
     if (!joinCode.trim()) return;
-    const { data: group, error } = await supabase
-      .from("groups")
-      .select()
-      .eq("invite_code", joinCode.toUpperCase())
-      .single();
+    const { data: group, error } = await supabase.from("groups").select().eq("invite_code", joinCode.toUpperCase()).single();
     if (error || !group) { triggerToast("❌ Invalid invite code"); return; }
-    const { error: joinError } = await supabase
-      .from("group_members")
-      .insert({ group_id: group.id, user_id: user.id });
+    const { error: joinError } = await supabase.from("group_members").insert({ group_id: group.id, user_id: user.id });
     if (joinError) { triggerToast("❌ Already in this group!"); return; }
-    setCurrentGroup(group);
-    setGroups([...groups, group]);
-    setShowJoinGroup(false);
-    setJoinCode("");
+    setCurrentGroup(group); setGroups([...groups, group]);
+    setShowJoinGroup(false); setJoinCode("");
+    loadMembers(group.id);
     triggerToast("✅ Joined " + group.group_name + "!");
   };
 
@@ -190,40 +165,20 @@ export default function Home() {
 
   const doCheckin = async () => {
     if (checkedInToday) return;
-    const today = getToday();
-    const { error } = await supabase.from("checkins").insert({
-      user_id: user.id,
-      group_id: currentGroup?.id || null,
-      date: today,
-    });
+    const { error } = await supabase.from("checkins").insert({ user_id: user.id, group_id: currentGroup?.id || null, date: getToday() });
     if (error) { triggerToast("❌ Error saving check-in"); return; }
     setCheckedInToday(true);
-    setAllCheckedIn(true);
     setHabits((prev) => prev.map((h) => ({ ...h, checked: true })));
     await loadStreak();
+    if (currentGroup) loadMembers(currentGroup.id);
     triggerToast("🔥 Day checked in! Streak extended!");
   };
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%", padding: "12px 16px",
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: 14, color: "white", fontSize: 14,
-    marginBottom: 10, outline: "none", boxSizing: "border-box",
-  };
+  const COLORS = ["#FF6B35","#4ECDC4","#FFE66D","#A8E6CF","#FF8B94","#C3A6FF","#FF6B9D"];
 
-  const btnPrimary: React.CSSProperties = {
-    width: "100%", padding: "14px",
-    background: "linear-gradient(135deg, #FF6B35, #FF3E6C)",
-    border: "none", borderRadius: 16, color: "white",
-    fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10,
-  };
-
-  const btnSecondary: React.CSSProperties = {
-    width: "100%", padding: "12px", background: "none",
-    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16,
-    color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer",
-  };
+  const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "white", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" };
+  const btnPrimary: React.CSSProperties = { width: "100%", padding: "14px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 };
+  const btnSecondary: React.CSSProperties = { width: "100%", padding: "12px", background: "none", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" };
 
   if (screen === "login") return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
@@ -248,11 +203,10 @@ export default function Home() {
       <div style={{ width: "100%", maxWidth: 430, position: "relative", minHeight: "100vh", background: "#0F0F18", paddingBottom: 80 }}>
         {showToast && <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(78,205,196,0.95)", color: "#0F0F18", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 600, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
         <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 24px 8px", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-          <span>9:41</span>
-          <span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span>
-          <span>●●●</span>
+          <span>9:41</span><span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span><span>●●●</span>
         </div>
 
+        {/* HOME */}
         {activeTab === "home" && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -295,10 +249,10 @@ export default function Home() {
               <button onClick={() => setActiveTab("group")} style={{ fontSize: 12, color: "#FF6B35", background: "none", border: "none", cursor: "pointer" }}>See all →</button>
             </div>
             {currentGroup ? (
-              <div style={{ margin: "0 20px 24px", background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16 }}>
+              <div onClick={() => { setActiveTab("group"); setShowGroupDetail(true); }} style={{ margin: "0 20px 24px", background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16, cursor: "pointer" }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{currentGroup.group_name}</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>{groupMembers.length} member{groupMembers.length !== 1 ? "s" : ""}</div>
-                <div style={{ fontSize: 11, color: "#FF6B35", fontWeight: 600 }}>Invite code: {currentGroup.invite_code}</div>
+                <div style={{ fontSize: 11, color: "#FF6B35", fontWeight: 600 }}>Invite code: {currentGroup.invite_code} · Tap to view →</div>
               </div>
             ) : (
               <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 20, textAlign: "center" }}>
@@ -309,7 +263,8 @@ export default function Home() {
           </div>
         )}
 
-        {activeTab === "group" && (
+        {/* GROUP */}
+        {activeTab === "group" && !showGroupDetail && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
               <div style={{ fontSize: 26, fontWeight: 800, marginBottom: 4 }}>Your Pack 🐺</div>
@@ -337,18 +292,15 @@ export default function Home() {
                 <button onClick={() => setShowJoinGroup(false)} style={btnSecondary}>Cancel</button>
               </div>
             )}
-            {groups.length > 0 && (
+            {groups.length > 0 && !showCreateGroup && !showJoinGroup && (
               <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Your Groups</div>
                 {groups.map((g) => (
-                  <div key={g.id} onClick={() => { setCurrentGroup(g); loadMembers(g.id); }} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", background: currentGroup?.id === g.id ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (currentGroup?.id === g.id ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
-                      <div style={{ fontSize: 15, fontWeight: 700 }}>{g.group_name}</div>
-                      {currentGroup?.id === g.id && <div style={{ fontSize: 10, background: "#FF6B35", color: "white", padding: "3px 8px", borderRadius: 100, fontWeight: 600 }}>ACTIVE</div>}
-                    </div>
-                    <div style={{ marginTop: 8, background: "rgba(255,107,53,0.1)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 10, padding: "6px 12px" }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Invite code: </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#FF6B35", letterSpacing: "0.1em" }}>{g.invite_code}</span>
+                  <div key={g.id} onClick={() => { setCurrentGroup(g); loadMembers(g.id); setShowGroupDetail(true); }} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "14px 16px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>{g.group_name}</div>
+                    <div style={{ background: "rgba(255,107,53,0.1)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 10, padding: "6px 12px" }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Code: </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#FF6B35" }}>{g.invite_code}</span>
                     </div>
                   </div>
                 ))}
@@ -363,6 +315,38 @@ export default function Home() {
           </div>
         )}
 
+        {/* GROUP DETAIL */}
+        {activeTab === "group" && showGroupDetail && currentGroup && (
+          <div>
+            <div style={{ padding: "8px 24px 20px" }}>
+              <button onClick={() => setShowGroupDetail(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 8, padding: 0 }}>← Back</button>
+              <div style={{ fontSize: 26, fontWeight: 800, marginBottom: 4 }}>{currentGroup.group_name}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{groupMembers.length} member{groupMembers.length !== 1 ? "s" : ""}</div>
+            </div>
+            <div style={{ margin: "0 20px 20px", background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16 }}>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Invite your friends with this code:</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#FF6B35", letterSpacing: "0.15em" }}>{currentGroup.invite_code}</div>
+            </div>
+            <div style={{ padding: "0 24px", marginBottom: 12 }}>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>Leaderboard 🏆</div>
+            </div>
+            <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+              {[...groupMembers].sort((a, b) => b.streak - a.streak).map((m, i) => (
+                <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 12, background: i === 0 ? "linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,62,108,0.08))" : "rgba(255,255,255,0.04)", border: "1px solid " + (i === 0 ? "rgba(255,107,53,0.2)" : "rgba(255,255,255,0.05)"), borderRadius: 18, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, width: 24, textAlign: "center" }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</div>
+                  <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.isMe ? (user?.user_metadata?.name || user?.email || "Y")[0].toUpperCase() : "?"}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{m.isMe ? (user?.user_metadata?.name || "You") : "Member"}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{m.checkedInToday ? "✅ Checked in" : "⏳ Not yet"}</div>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#FF6B35" }}>{m.streak}<span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}> days</span></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* CHECKIN */}
         {activeTab === "checkin" && (
           <div>
             <div style={{ margin: "8px 20px 20px", background: "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center" }}>
@@ -397,6 +381,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* PROFILE */}
         {activeTab === "profile" && (
           <div>
             <div style={{ padding: "8px 24px 24px", display: "flex", gap: 16, alignItems: "center" }}>
@@ -424,7 +409,7 @@ export default function Home() {
 
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, height: 80, background: "rgba(15,15,24,0.97)", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-around", paddingBottom: 12, zIndex: 100 }}>
           {[{ id: "home", icon: "🏠", label: "Home" }, { id: "group", icon: "👥", label: "Pack" }, { id: "checkin", icon: "✅", label: "Check In" }, { id: "profile", icon: "👤", label: "Profile" }].map((tab) => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab.id ? "#FF6B35" : "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 500, padding: "8px 16px", borderRadius: 16, backgroundColor: activeTab === tab.id ? "rgba(255,107,53,0.1)" : "transparent" }}>
+            <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id !== "group") setShowGroupDetail(false); }} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab.id ? "#FF6B35" : "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 500, padding: "8px 16px", borderRadius: 16, backgroundColor: activeTab === tab.id ? "rgba(255,107,53,0.1)" : "transparent" }}>
               <span style={{ fontSize: 20 }}>{tab.icon}</span>
               {tab.label}
             </button>
