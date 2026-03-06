@@ -121,7 +121,7 @@ export default function Home() {
     setGroups([...groups, data]);
     setShowCreateGroup(false);
     setNewGroupName("");
-    triggerToast(`✅ Group created! Code: ${code}`);
+    triggerToast("✅ Group created! Code: " + code);
   };
 
   const joinGroup = async () => {
@@ -140,7 +140,7 @@ export default function Home() {
     setGroups([...groups, group]);
     setShowJoinGroup(false);
     setJoinCode("");
-    triggerToast(`✅ Joined ${group.group_name}!`);
+    triggerToast("✅ Joined " + group.group_name + "!");
   };
 
   const toggleHabit = (id: number) => {
@@ -155,19 +155,6 @@ export default function Home() {
       triggerToast("🔥 Day checked in! Streak extended!");
     }
   };
-
-  const nudgeFriend = (id: string) => {
-    setNudged((prev) => ({ ...prev, [id]: true }));
-    triggerToast(`👋 Nudge sent!`);
-  };
-
-  // Styles
-  const cardStyle = (active = false): React.CSSProperties => ({
-    display: "flex", alignItems: "center", gap: 14,
-    background: active ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)",
-    border: `1px solid ${active ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"}`,
-    borderRadius: 18, padding: "14px 16px", cursor: "pointer",
-  });
 
   const inputStyle: React.CSSProperties = {
     width: "100%", padding: "12px 16px",
@@ -190,7 +177,6 @@ export default function Home() {
     color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer",
   };
 
-  // ── LOGIN ─────────────────────────────────────────────────────────────────
   if (screen === "login") return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ width: 360, padding: "40px 32px", background: "#0F0F18", borderRadius: 28, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -209,27 +195,22 @@ export default function Home() {
     </div>
   );
 
-  // ── APP ───────────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", justifyContent: "center" }}>
       <div style={{ width: "100%", maxWidth: 430, position: "relative", minHeight: "100vh", background: "#0F0F18", paddingBottom: 80 }}>
-
         {showToast && <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(78,205,196,0.95)", color: "#0F0F18", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 600, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
-
         <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 24px 8px", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
           <span>9:41</span>
           <span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span>
           <span>●●●</span>
         </div>
 
-        {/* ── HOME ── */}
         {activeTab === "home" && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
               <div style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.2, marginBottom: 4 }}>Good morning,<br /><span style={{ color: "#FF6B35" }}>{user?.user_metadata?.name || "You"}.</span></div>
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>Keep the streak alive 🔥</div>
             </div>
-
             <div style={{ margin: "0 20px 20px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", borderRadius: 28, padding: 24 }}>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.8, fontWeight: 600 }}>Current Streak</div>
               <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1 }}>{streak}</div>
@@ -243,39 +224,36 @@ export default function Home() {
                 ))}
               </div>
             </div>
-
             <div style={{ display: "flex", justifyContent: "space-between", padding: "0 24px", marginBottom: 12 }}>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Today's Habits</div>
               <div style={{ fontSize: 12, color: "#FF6B35" }}>{doneCount}/{habits.length} done</div>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
               {habits.map((h) => (
-                <div key={h.id} onClick={() => toggleHabit(h.id)} style={cardStyle(h.checked)}>
+                <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer" }}>
                   <div style={{ fontSize: 22, width: 44, height: 44, background: h.checked ? "rgba(78,205,196,0.15)" : "rgba(255,255,255,0.06)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>{h.icon}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 500, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1 }}>{h.label}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", textTransform: "capitalize" }}>{h.category}</div>
                   </div>
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: `2px solid ${h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {h.checked && <span style={{ color: "white", fontSize: 11, fontWeight: 700 }}>✓</span>}
                   </div>
                 </div>
               ))}
             </div>
-
-            {/* Group preview */}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "0 24px", marginBottom: 12 }}>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Your Pack</div>
               <button onClick={() => setActiveTab("group")} style={{ fontSize: 12, color: "#FF6B35", background: "none", border: "none", cursor: "pointer" }}>See all →</button>
             </div>
             {currentGroup ? (
-              <div style={{ margin: "0 20px 24px", background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: "16px" }}>
+              <div style={{ margin: "0 20px 24px", background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{currentGroup.group_name} 🐺</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>{groupMembers.length} member{groupMembers.length !== 1 ? "s" : ""}</div>
                 <div style={{ fontSize: 11, color: "#FF6B35", fontWeight: 600 }}>Invite code: {currentGroup.invite_code}</div>
               </div>
             ) : (
-              <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: "20px", textAlign: "center" }}>
+              <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 20, textAlign: "center" }}>
                 <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 12 }}>No pack yet — create or join one!</div>
                 <button onClick={() => setActiveTab("group")} style={{ ...btnPrimary, width: "auto", padding: "10px 20px", marginBottom: 0 }}>Get Started →</button>
               </div>
@@ -283,62 +261,51 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── GROUP ── */}
         {activeTab === "group" && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
               <div style={{ fontSize: 26, fontWeight: 800, marginBottom: 4 }}>Your Pack 🐺</div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Create or join a group to get started</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Create or join a group</div>
             </div>
-
-            {/* Create / Join buttons */}
             {!showCreateGroup && !showJoinGroup && (
               <div style={{ padding: "0 20px", display: "flex", gap: 10, marginBottom: 24 }}>
-                <button onClick={() => setShowCreateGroup(true)} style={{ flex: 1, padding: "14px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>+ Create Group</button>
-                <button onClick={() => setShowJoinGroup(true)} style={{ flex: 1, padding: "14px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Join Group</button>
+                <button onClick={() => setShowCreateGroup(true)} style={{ flex: 1, padding: 14, background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>+ Create Group</button>
+                <button onClick={() => setShowJoinGroup(true)} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Join Group</button>
               </div>
             )}
-
-            {/* Create Group Form */}
             {showCreateGroup && (
               <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 20 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Create a Group</div>
-                <input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name (e.g. Morning Warriors)" style={inputStyle} />
-                <button onClick={createGroup} style={btnPrimary}>Create & Get Invite Code</button>
+                <input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name" style={inputStyle} />
+                <button onClick={createGroup} style={btnPrimary}>Create and Get Invite Code</button>
                 <button onClick={() => setShowCreateGroup(false)} style={btnSecondary}>Cancel</button>
               </div>
             )}
-
-            {/* Join Group Form */}
             {showJoinGroup && (
               <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 20 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Join a Group</div>
-                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter invite code (e.g. AB12CD)" style={{ ...inputStyle, textTransform: "uppercase" }} />
+                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter invite code" style={inputStyle} />
                 <button onClick={joinGroup} style={btnPrimary}>Join Group</button>
                 <button onClick={() => setShowJoinGroup(false)} style={btnSecondary}>Cancel</button>
               </div>
             )}
-
-            {/* Groups list */}
             {groups.length > 0 && (
               <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Your Groups</div>
                 {groups.map((g) => (
-                  <div key={g.id} onClick={() => { setCurrentGroup(g); loadMembers(g.id); }} style={{ ...cardStyle(currentGroup?.id === g.id), flexDirection: "column", alignItems: "flex-start" }}>
+                  <div key={g.id} onClick={() => { setCurrentGroup(g); loadMembers(g.id); }} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", background: currentGroup?.id === g.id ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (currentGroup?.id === g.id ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
                       <div style={{ fontSize: 15, fontWeight: 700 }}>{g.group_name} 🐺</div>
                       {currentGroup?.id === g.id && <div style={{ fontSize: 10, background: "#FF6B35", color: "white", padding: "3px 8px", borderRadius: 100, fontWeight: 600 }}>ACTIVE</div>}
                     </div>
-                    <div style={{ marginTop: 8, background: "rgba(255,107,53,0.1)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 10, padding: "6px 12px", display: "inline-block" }}>
+                    <div style={{ marginTop: 8, background: "rgba(255,107,53,0.1)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 10, padding: "6px 12px" }}>
                       <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Invite code: </span>
                       <span style={{ fontSize: 13, fontWeight: 700, color: "#FF6B35", letterSpacing: "0.1em" }}>{g.invite_code}</span>
                     </div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 6 }}>{groupMembers.length} member{groupMembers.length !== 1 ? "s" : ""} · Tap to select</div>
                   </div>
                 ))}
               </div>
             )}
-
             {groups.length === 0 && !showCreateGroup && !showJoinGroup && (
               <div style={{ textAlign: "center", padding: "40px 20px", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🐺</div>
@@ -348,28 +315,27 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── CHECKIN ── */}
         {activeTab === "checkin" && (
           <div>
             <div style={{ margin: "8px 20px 20px", background: "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center" }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>{allCheckedIn ? "🎉" : "⚡"}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{allCheckedIn ? "You're done!" : "Daily Check-In"}</div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{allCheckedIn ? `Streak extended to ${streak + 1} days!` : `Complete habits to keep your ${streak}-day streak alive.`}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{allCheckedIn ? "You are done!" : "Daily Check-In"}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{allCheckedIn ? "Streak extended to " + (streak + 1) + " days!" : "Complete habits to keep your " + streak + "-day streak alive."}</div>
             </div>
             <div style={{ display: "flex", justifyContent: "center", margin: "0 0 20px" }}>
               <svg width="120" height="120" viewBox="0 0 120 120">
                 <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
-                <circle cx="60" cy="60" r="52" fill="none" stroke={allCheckedIn ? "#4ECDC4" : "#FF6B35"} strokeWidth="8" strokeLinecap="round" strokeDasharray={`${2 * Math.PI * 52}`} strokeDashoffset={`${2 * Math.PI * 52 * (1 - (allCheckedIn ? 1 : progress))}`} transform="rotate(-90 60 60)" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
-                <text x="60" y="55" textAnchor="middle" fill="white" fontWeight="800" fontSize="22">{allCheckedIn ? "✓" : `${doneCount}/${habits.length}`}</text>
+                <circle cx="60" cy="60" r="52" fill="none" stroke={allCheckedIn ? "#4ECDC4" : "#FF6B35"} strokeWidth="8" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 52)} strokeDashoffset={String(2 * Math.PI * 52 * (1 - (allCheckedIn ? 1 : progress)))} transform="rotate(-90 60 60)" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+                <text x="60" y="55" textAnchor="middle" fill="white" fontWeight="800" fontSize="22">{allCheckedIn ? "✓" : doneCount + "/" + habits.length}</text>
                 <text x="60" y="72" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="11">{allCheckedIn ? "All done!" : "habits"}</text>
               </svg>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
               {habits.map((h) => (
-                <div key={h.id} onClick={() => toggleHabit(h.id)} style={cardStyle(h.checked)}>
+                <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: allCheckedIn ? "default" : "pointer" }}>
                   <div style={{ fontSize: 22 }}>{h.icon}</div>
                   <div style={{ flex: 1, fontSize: 14, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1 }}>{h.label}</div>
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: `2px solid ${h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {h.checked && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
                   </div>
                 </div>
@@ -377,13 +343,12 @@ export default function Home() {
             </div>
             <div style={{ padding: "0 20px" }}>
               <button onClick={doCheckin} style={{ width: "100%", padding: 18, borderRadius: 20, border: allCheckedIn ? "1px solid rgba(78,205,196,0.2)" : "none", background: allCheckedIn ? "rgba(78,205,196,0.1)" : "linear-gradient(135deg, #FF6B35, #FF3E6C)", color: allCheckedIn ? "#4ECDC4" : "white", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>
-                {allCheckedIn ? "✅ Checked In Today!" : `Check In${doneCount > 0 ? ` (${doneCount}/${habits.length})` : ""}`}
+                {allCheckedIn ? "✅ Checked In Today!" : "Check In" + (doneCount > 0 ? " (" + doneCount + "/" + habits.length + ")" : "")}
               </button>
             </div>
           </div>
         )}
 
-        {/* ── PROFILE ── */}
         {activeTab === "profile" && (
           <div>
             <div style={{ padding: "8px 24px 24px", display: "flex", gap: 16, alignItems: "center" }}>
@@ -409,7 +374,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Bottom Nav */}
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, height: 80, background: "rgba(15,15,24,0.97)", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-around", paddingBottom: 12, zIndex: 100 }}>
           {[{ id: "home", icon: "🏠", label: "Home" }, { id: "group", icon: "👥", label: "Pack" }, { id: "checkin", icon: "✅", label: "Check In" }, { id: "profile", icon: "👤", label: "Profile" }].map((tab) => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab.id ? "#FF6B35" : "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 500, padding: "8px 16px", borderRadius: 16, backgroundColor: activeTab === tab.id ? "rgba(255,107,53,0.1)" : "transparent" }}>
@@ -422,10 +386,3 @@ export default function Home() {
     </div>
   );
 }
-```
-
-Once pasted press **Cmd+S** to save, then in the terminal run:
-```
-git add .
-git commit -m "add group creation and invite codes"
-git push origin main
