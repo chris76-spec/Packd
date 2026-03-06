@@ -15,9 +15,26 @@ const HABITS_DEFAULT = [
   { id: 5, icon: "🥗", label: "Eat Clean", category: "fitness", checked: false },
 ];
 
+const FAKE_NAMES: Record<string, string> = {
+  "807bc5d8-e208-46eb-a87f-0e961c06b495": "Alex",
+  "27158558-0e07-4808-8f2f-c3e38d404123": "Jordan",
+  "c575d092-5519-4957-bb5b-dbe62499365f": "Sam",
+  "9798eb2b-82d2-4e99-a99b-9ecb652263ee": "Riley",
+  "e2864dba-c4c6-4437-a0bc-41f2802e79dd": "Morgan",
+};
+
 const WEEK = ["M", "T", "W", "T", "F", "S", "S"];
+const COLORS = ["#FF6B35","#4ECDC4","#FFE66D","#A8E6CF","#FF8B94","#C3A6FF"];
+
 function generateCode() { return Math.random().toString(36).substring(2, 8).toUpperCase(); }
 function getToday() { return new Date().toISOString().split("T")[0]; }
+function streakEmoji(s: number) {
+  if (s >= 21) return "👑";
+  if (s >= 14) return "🌟";
+  if (s >= 7) return "🔥";
+  if (s >= 3) return "⚡";
+  return "🌱";
+}
 
 export default function Home() {
   const [screen, setScreen] = useState("login");
@@ -112,8 +129,9 @@ export default function Home() {
           if (diff === memberStreak || (memberStreak === 0 && diff === 0)) { memberStreak++; current.setDate(current.getDate() - 1); } else break;
         }
       }
-      const { data: userData } = await supabase.auth.admin?.listUsers ? { data: null } : { data: null };
-      return { user_id: m.user_id, streak: memberStreak, checkedInToday: checkedToday, isMe: m.user_id === user.id };
+      const isMe = m.user_id === user.id;
+      const displayName = isMe ? (user?.user_metadata?.name || "You") : (FAKE_NAMES[m.user_id] || "Member");
+      return { user_id: m.user_id, streak: memberStreak, checkedInToday: checkedToday, isMe, displayName };
     }));
     setGroupMembers(members);
   };
@@ -174,8 +192,6 @@ export default function Home() {
     triggerToast("🔥 Day checked in! Streak extended!");
   };
 
-  const COLORS = ["#FF6B35","#4ECDC4","#FFE66D","#A8E6CF","#FF8B94","#C3A6FF","#FF6B9D"];
-
   const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "white", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" };
   const btnPrimary: React.CSSProperties = { width: "100%", padding: "14px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 };
   const btnSecondary: React.CSSProperties = { width: "100%", padding: "12px", background: "none", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" };
@@ -206,7 +222,6 @@ export default function Home() {
           <span>9:41</span><span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span><span>●●●</span>
         </div>
 
-        {/* HOME */}
         {activeTab === "home" && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -216,7 +231,7 @@ export default function Home() {
             <div style={{ margin: "0 20px 20px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", borderRadius: 28, padding: 24 }}>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.8, fontWeight: 600 }}>Current Streak</div>
               <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1 }}>{streak}</div>
-              <div style={{ fontSize: 13, opacity: 0.75 }}>days in a row 🔥</div>
+              <div style={{ fontSize: 13, opacity: 0.75 }}>days in a row {streakEmoji(streak)}</div>
               <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
                 {weekDays.map((d, i) => (
                   <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -252,7 +267,7 @@ export default function Home() {
               <div onClick={() => { setActiveTab("group"); setShowGroupDetail(true); }} style={{ margin: "0 20px 24px", background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16, cursor: "pointer" }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{currentGroup.group_name}</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>{groupMembers.length} member{groupMembers.length !== 1 ? "s" : ""}</div>
-                <div style={{ fontSize: 11, color: "#FF6B35", fontWeight: 600 }}>Invite code: {currentGroup.invite_code} · Tap to view →</div>
+                <div style={{ fontSize: 11, color: "#FF6B35", fontWeight: 600 }}>Code: {currentGroup.invite_code} · Tap to view →</div>
               </div>
             ) : (
               <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 20, textAlign: "center" }}>
@@ -263,7 +278,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* GROUP */}
         {activeTab === "group" && !showGroupDetail && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -315,7 +329,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* GROUP DETAIL */}
         {activeTab === "group" && showGroupDetail && currentGroup && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -334,25 +347,27 @@ export default function Home() {
               {[...groupMembers].sort((a, b) => b.streak - a.streak).map((m, i) => (
                 <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 12, background: i === 0 ? "linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,62,108,0.08))" : "rgba(255,255,255,0.04)", border: "1px solid " + (i === 0 ? "rgba(255,107,53,0.2)" : "rgba(255,255,255,0.05)"), borderRadius: 18, padding: "14px 16px" }}>
                   <div style={{ fontSize: 16, fontWeight: 800, width: 24, textAlign: "center" }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</div>
-                  <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.isMe ? (user?.user_metadata?.name || user?.email || "Y")[0].toUpperCase() : "?"}</div>
+                  <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.displayName[0]}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{m.isMe ? (user?.user_metadata?.name || "You") : "Member"}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{m.displayName}{m.isMe ? " (you)" : ""}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{m.checkedInToday ? "✅ Checked in" : "⏳ Not yet"}</div>
                   </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: "#FF6B35" }}>{m.streak}<span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}> days</span></div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "#FF6B35" }}>{m.streak} <span style={{ fontSize: 14 }}>{streakEmoji(m.streak)}</span></div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>day streak</div>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* CHECKIN */}
         {activeTab === "checkin" && (
           <div>
             <div style={{ margin: "8px 20px 20px", background: "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center" }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>{checkedInToday ? "🎉" : "⚡"}</div>
               <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{checkedInToday ? "You are done!" : "Daily Check-In"}</div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{checkedInToday ? "Streak is at " + streak + " days!" : "Complete habits to keep your " + streak + "-day streak alive."}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{checkedInToday ? "Streak is at " + streak + " days " + streakEmoji(streak) : "Complete habits to keep your " + streak + "-day streak alive."}</div>
             </div>
             <div style={{ display: "flex", justifyContent: "center", margin: "0 0 20px" }}>
               <svg width="120" height="120" viewBox="0 0 120 120">
@@ -381,7 +396,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* PROFILE */}
         {activeTab === "profile" && (
           <div>
             <div style={{ padding: "8px 24px 24px", display: "flex", gap: 16, alignItems: "center" }}>
@@ -394,9 +408,9 @@ export default function Home() {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, padding: "0 20px", marginBottom: 24 }}>
-              {[{ v: streak, l: "Day Streak" }, { v: groups.length, l: "Groups" }, { v: checkedInToday ? "✓" : "—", l: "Today" }].map((s, i) => (
+              {[{ v: streak + " " + streakEmoji(streak), l: "Day Streak" }, { v: groups.length, l: "Groups" }, { v: checkedInToday ? "✓" : "—", l: "Today" }].map((s, i) => (
                 <div key={i} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "16px 12px", textAlign: "center" }}>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: "#FF6B35", lineHeight: 1, marginBottom: 4 }}>{s.v}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#FF6B35", lineHeight: 1, marginBottom: 4 }}>{s.v}</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.l}</div>
                 </div>
               ))}
