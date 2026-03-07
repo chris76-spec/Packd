@@ -26,6 +26,21 @@ const FAKE_NAMES: Record<string, string> = {
 const WEEK = ["M", "T", "W", "T", "F", "S", "S"];
 const COLORS = ["#FF6B35","#4ECDC4","#FFE66D","#A8E6CF","#FF8B94","#C3A6FF"];
 
+const HYPE_MESSAGES = [
+  { emoji: "🌱", title: "You started!", sub: "That's literally all it takes. One step." },
+  { emoji: "⚡", title: "Getting warmer!", sub: "Look at you go. Keep that energy." },
+  { emoji: "🔥", title: "Halfway there!", sub: "You're in the zone. Don't stop now." },
+  { emoji: "💪", title: "So close!", sub: "One more and you're unstoppable today." },
+  { emoji: "👑", title: "YOU CRUSHED IT!", sub: "Full send. Absolute legend. Streak secured! 🎉" },
+];
+
+const HOME_MESSAGES = [
+  "Nice! Keep going 💧",
+  "Two down! You're on a roll ⚡",
+  "Halfway! Don't stop now 🔥",
+  "Almost there! One more 💪",
+];
+
 function generateCode() { return Math.random().toString(36).substring(2, 8).toUpperCase(); }
 function getToday() { return new Date().toISOString().split("T")[0]; }
 function streakEmoji(s: number) {
@@ -54,6 +69,7 @@ export default function Home() {
   const [habits, setHabits] = useState(HABITS_DEFAULT);
   const [toast, setToast] = useState("");
   const [showToast, setShowToast] = useState(false);
+  const [toastBig, setToastBig] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -73,6 +89,10 @@ export default function Home() {
   const [checkedInToday, setCheckedInToday] = useState(false);
   const [checkInType, setCheckInType] = useState<"full"|"partial"|null>(null);
   const [weekDays, setWeekDays] = useState(WEEK.map((d) => ({ label: d, filled: false, today: false })));
+  const [homePopup, setHomePopup] = useState("");
+  const [showHomePopup, setShowHomePopup] = useState(false);
+  const [celebrating, setCelebrating] = useState(false);
+  const [confetti, setConfetti] = useState<{id:number,x:number,color:string,delay:number}[]>([]);
 
   const doneCount = habits.filter((h) => h.checked).length;
   const progress = doneCount / habits.length;
@@ -95,11 +115,7 @@ export default function Home() {
   const ensureUserRecord = async () => {
     const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
     if (!data) {
-      await supabase.from("users").insert({
-        id: user.id,
-        name: user.user_metadata?.name || "",
-        email: user.email,
-      });
+      await supabase.from("users").insert({ id: user.id, name: user.user_metadata?.name || "", email: user.email });
     }
   };
 
@@ -159,26 +175,33 @@ export default function Home() {
       const displayName = isMe
         ? (user?.user_metadata?.name || userRecord?.name || user?.email?.split("@")[0] || "You")
         : (FAKE_NAMES[m.user_id] || userRecord?.name || userRecord?.email?.split("@")[0] || "User");
-      return {
-        user_id: m.user_id, streak: memberStreak,
-        checkedInToday: !!todayRow,
-        isPartialToday: todayRow && todayRow.habits_completed < 5,
-        isMe, displayName
-      };
+      return { user_id: m.user_id, streak: memberStreak, checkedInToday: !!todayRow, isPartialToday: todayRow && todayRow.habits_completed < 5, isMe, displayName };
     }));
     setGroupMembers(members);
   };
 
-  const triggerToast = (msg: string) => { setToast(msg); setShowToast(true); setTimeout(() => setShowToast(false), 2500); };
+  const triggerToast = (msg: string, big = false) => {
+    setToast(msg); setToastBig(big); setShowToast(true);
+    setTimeout(() => setShowToast(false), big ? 3000 : 2000);
+  };
+
+  const fireConfetti = () => {
+    const pieces = Array.from({length: 30}, (_, i) => ({
+      id: i, x: Math.random() * 100,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      delay: Math.random() * 0.5
+    }));
+    setConfetti(pieces);
+    setCelebrating(true);
+    setTimeout(() => { setConfetti([]); setCelebrating(false); }, 3000);
+  };
 
   const handleAuth = async () => {
     setLoading(true);
     if (isSignUp) {
       const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
       if (error) { triggerToast("❌ " + error.message); setLoading(false); return; }
-      if (data.user) {
-        await supabase.from("users").upsert({ id: data.user.id, name, email });
-      }
+      if (data.user) { await supabase.from("users").upsert({ id: data.user.id, name, email }); }
       triggerToast("✅ Account created! Please sign in.");
       setIsSignUp(false);
     } else {
@@ -213,9 +236,24 @@ export default function Home() {
     triggerToast("✅ Joined " + group.group_name + "!");
   };
 
-  const toggleHabit = (id: number) => {
+  const toggleHabit = (id: number, fromHome = false) => {
     if (checkInType === "full") return;
+    const habit = habits.find(h => h.id === id);
+    const willBeChecked = !habit?.checked;
     setHabits((prev) => prev.map((h) => h.id === id ? { ...h, checked: !h.checked } : h));
+    if (fromHome && willBeChecked) {
+      const newCount = habits.filter(h => h.checked).length + 1;
+      if (newCount === habits.length) {
+        setHomePopup("🎉 ALL DONE! You're on fire today!");
+        setShowHomePopup(true);
+        fireConfetti();
+        setTimeout(() => setShowHomePopup(false), 3000);
+      } else if (HOME_MESSAGES[newCount - 1]) {
+        setHomePopup(HOME_MESSAGES[newCount - 1]);
+        setShowHomePopup(true);
+        setTimeout(() => setShowHomePopup(false), 1800);
+      }
+    }
   };
 
   const doCheckin = async () => {
@@ -234,8 +272,9 @@ export default function Home() {
     await loadPersonalStreak();
     await loadGroupStreak();
     if (currentGroup) loadMembers(currentGroup.id);
-    if (type === "full") triggerToast("🔥 Full check-in! Streak extended!");
-    else triggerToast("⚡ Partial check-in! Keep going!");
+    const hype = HYPE_MESSAGES[doneCount - 1] || HYPE_MESSAGES[HYPE_MESSAGES.length - 1];
+    if (type === "full") { fireConfetti(); triggerToast(hype.emoji + " " + hype.title + " " + hype.sub, true); }
+    else triggerToast(hype.emoji + " " + hype.title + " — " + hype.sub);
   };
 
   const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "white", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" };
@@ -260,10 +299,28 @@ export default function Home() {
     </div>
   );
 
+  const hype = doneCount > 0 ? HYPE_MESSAGES[Math.min(doneCount - 1, HYPE_MESSAGES.length - 1)] : null;
+
   return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 430, position: "relative", minHeight: "100vh", background: "#0F0F18", paddingBottom: 80 }}>
-        {showToast && <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(78,205,196,0.95)", color: "#0F0F18", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 600, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
+      <div style={{ width: "100%", maxWidth: 430, position: "relative", minHeight: "100vh", background: "#0F0F18", paddingBottom: 80, overflow: "hidden" }}>
+
+        {/* Confetti */}
+        {confetti.map(c => (
+          <div key={c.id} style={{ position: "fixed", top: "-10px", left: c.x + "%", width: 8, height: 8, background: c.color, borderRadius: 2, zIndex: 1000, animation: `fall 2.5s ${c.delay}s ease-in forwards`, pointerEvents: "none" }} />
+        ))}
+        <style>{`@keyframes fall { 0% { transform: translateY(0) rotate(0deg); opacity:1; } 100% { transform: translateY(100vh) rotate(720deg); opacity:0; } } @keyframes popIn { 0% { transform: translateX(-50%) scale(0.7); opacity:0; } 60% { transform: translateX(-50%) scale(1.08); } 100% { transform: translateX(-50%) scale(1); opacity:1; } } @keyframes slideUp { 0% { transform: translateX(-50%) translateY(20px); opacity:0; } 100% { transform: translateX(-50%) translateY(0); opacity:1; } }`}</style>
+
+        {/* Toast */}
+        {showToast && (
+          <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: toastBig ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "rgba(30,30,40,0.97)", color: "white", padding: toastBig ? "16px 28px" : "10px 20px", borderRadius: 100, fontSize: toastBig ? 15 : 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap", boxShadow: toastBig ? "0 8px 32px rgba(255,107,53,0.4)" : "0 4px 16px rgba(0,0,0,0.3)", animation: "slideUp 0.3s ease" }}>{toast}</div>
+        )}
+
+        {/* Home popup */}
+        {showHomePopup && (
+          <div style={{ position: "fixed", top: 80, left: "50%", background: "rgba(255,107,53,0.15)", border: "1px solid rgba(255,107,53,0.3)", backdropFilter: "blur(12px)", color: "white", padding: "10px 20px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 998, whiteSpace: "nowrap", animation: "popIn 0.3s ease" }}>{homePopup}</div>
+        )}
+
         <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 24px 8px", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
           <span>9:41</span><span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span><span>●●●</span>
         </div>
@@ -298,13 +355,13 @@ export default function Home() {
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
               {habits.map((h) => (
-                <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkInType === "full" ? "default" : "pointer" }}>
-                  <div style={{ fontSize: 22, width: 44, height: 44, background: h.checked ? "rgba(78,205,196,0.15)" : "rgba(255,255,255,0.06)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>{h.icon}</div>
+                <div key={h.id} onClick={() => toggleHabit(h.id, true)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkInType === "full" ? "default" : "pointer", transition: "all 0.2s ease" }}>
+                  <div style={{ fontSize: 22, width: 44, height: 44, background: h.checked ? "rgba(78,205,196,0.15)" : "rgba(255,255,255,0.06)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s ease" }}>{h.icon}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1 }}>{h.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1, transition: "all 0.2s ease" }}>{h.label}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", textTransform: "capitalize" }}>{h.category}</div>
                   </div>
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s ease" }}>
                     {h.checked && <span style={{ color: "white", fontSize: 11, fontWeight: 700 }}>✓</span>}
                   </div>
                 </div>
@@ -410,9 +467,7 @@ export default function Home() {
                   <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.displayName[0]}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>{m.displayName}{m.isMe ? " (you)" : ""}</div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
-                      {m.checkedInToday ? (m.isPartialToday ? "⚡ Partial" : "✅ Full check-in") : "⏳ Not yet"}
-                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{m.checkedInToday ? (m.isPartialToday ? "⚡ Partial" : "✅ Full check-in") : "⏳ Not yet"}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 18, fontWeight: 800, color: "#FF6B35" }}>{m.streak} <span style={{ fontSize: 14 }}>{streakEmoji(m.streak)}</span></div>
@@ -426,38 +481,34 @@ export default function Home() {
 
         {activeTab === "checkin" && (
           <div>
-            <div style={{ margin: "8px 20px 20px", background: "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center" }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>{checkInType === "full" ? "🎉" : "⚡"}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>
-                {checkInType === "full" ? "Full check-in!" : checkInType === "partial" ? "Partial check-in!" : "Daily Check-In"}
-              </div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-                {checkInType === "full" ? "You crushed it! Streak: " + personalStreak + " days " + streakEmoji(personalStreak)
-                  : checkInType === "partial" ? "You showed up! Keep adding more. Streak: " + personalStreak + " days " + streakEmoji(personalStreak)
-                  : "Tick what you've done — even 1 habit keeps your streak alive!"}
+            <div style={{ margin: "8px 20px 20px", background: hype && isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center", transition: "all 0.4s ease" }}>
+              <div style={{ fontSize: 48, marginBottom: 12, transition: "all 0.3s ease" }}>{hype ? hype.emoji : "⚡"}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{hype ? hype.title : "Daily Check-In"}</div>
+              <div style={{ fontSize: 13, color: isFull ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                {hype ? hype.sub : "Tick what you've done — even 1 habit keeps your streak alive!"}
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "center", margin: "0 0 20px" }}>
               <svg width="120" height="120" viewBox="0 0 120 120">
                 <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
-                <circle cx="60" cy="60" r="52" fill="none" stroke={checkInType === "full" ? "#4ECDC4" : checkInType === "partial" ? "#FFE66D" : "#FF6B35"} strokeWidth="8" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 52)} strokeDashoffset={String(2 * Math.PI * 52 * (1 - progress))} transform="rotate(-90 60 60)" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+                <circle cx="60" cy="60" r="52" fill="none" stroke={isFull ? "#4ECDC4" : doneCount > 0 ? "#FFE66D" : "#FF6B35"} strokeWidth="8" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 52)} strokeDashoffset={String(2 * Math.PI * 52 * (1 - progress))} transform="rotate(-90 60 60)" style={{ transition: "stroke-dashoffset 0.5s ease, stroke 0.3s ease" }} />
                 <text x="60" y="55" textAnchor="middle" fill="white" fontWeight="800" fontSize="22">{doneCount + "/" + habits.length}</text>
                 <text x="60" y="72" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="11">habits</text>
               </svg>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
               {habits.map((h) => (
-                <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkInType === "full" ? "default" : "pointer" }}>
+                <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkInType === "full" ? "default" : "pointer", transition: "all 0.2s ease" }}>
                   <div style={{ fontSize: 22 }}>{h.icon}</div>
-                  <div style={{ flex: 1, fontSize: 14, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1 }}>{h.label}</div>
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ flex: 1, fontSize: 14, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1, transition: "all 0.2s ease" }}>{h.label}</div>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s ease" }}>
                     {h.checked && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
                   </div>
                 </div>
               ))}
             </div>
             <div style={{ padding: "0 20px" }}>
-              <button onClick={doCheckin} disabled={doneCount === 0} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: doneCount === 0 ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: doneCount === 0 ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: doneCount === 0 ? "not-allowed" : "pointer" }}>
+              <button onClick={doCheckin} disabled={doneCount === 0} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: doneCount === 0 ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: doneCount === 0 ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: doneCount === 0 ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
                 {doneCount === 0 ? "Tick at least one habit first" : isFull ? "🔥 Full Check-In!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
               </button>
             </div>
