@@ -33,6 +33,34 @@ const HOME_MESSAGES = [
   "Almost there! One more 💪",
 ];
 
+function getGreeting() {
+  const hour = new Date().getHours();
+  const morning = [
+    { line: "Rise and grind", emoji: "☀️" },
+    { line: "Make today count", emoji: "🔥" },
+    { line: "The pack is watching", emoji: "👀" },
+  ];
+  const afternoon = [
+    { line: "Still time to win today", emoji: "⚡" },
+    { line: "Halfway through — finish strong", emoji: "💪" },
+    { line: "Don't let the pack down", emoji: "🐺" },
+  ];
+  const evening = [
+    { line: "End the day right", emoji: "🌙" },
+    { line: "Last chance to keep the streak", emoji: "🔥" },
+    { line: "The wolf doesn't sleep", emoji: "🐺" },
+  ];
+  const pool = hour >= 5 && hour < 12 ? morning : hour >= 12 && hour < 18 ? afternoon : evening;
+  return pool[new Date().getDay() % pool.length];
+}
+
+function getTimeLabel() {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 function generateCode() { return Math.random().toString(36).substring(2, 8).toUpperCase(); }
 function getToday() { return new Date().toISOString().split("T")[0]; }
 function streakEmoji(s: number) {
@@ -97,7 +125,12 @@ export default function Home() {
   const [homePopup, setHomePopup] = useState("");
   const [showHomePopup, setShowHomePopup] = useState(false);
   const [confetti, setConfetti] = useState<{id:number,x:number,color:string,delay:number}[]>([]);
-  const [isNewUser, setIsNewUser] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<any>(null);
+  const [memberHabits, setMemberHabits] = useState<any[]>([]);
+  const [memberStreak, setMemberStreak] = useState(0);
+  const [showMemberProfile, setShowMemberProfile] = useState(false);
+  const [greeting] = useState(getGreeting());
+  const [isFirstVisit, setIsFirstVisit] = useState(false);
 
   const doneCount = habits.filter((h) => h.checked).length;
   const progress = habits.length > 0 ? doneCount / habits.length : 0;
@@ -109,7 +142,7 @@ export default function Home() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) { setUser(session.user); setScreen("app"); }
+      if (session?.user) { setUser(session.user); }
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) { setUser(session.user); }
@@ -138,10 +171,10 @@ export default function Home() {
   const checkIfNewUser = async () => {
     const { data } = await supabase.from("habits").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
     if (!data || data.length === 0) {
-      setIsNewUser(true);
+      setIsFirstVisit(true);
       setScreen("welcome");
     } else {
-      setIsNewUser(false);
+      setIsFirstVisit(false);
       loadUserHabits();
       setScreen("app");
     }
@@ -169,6 +202,9 @@ export default function Home() {
       setCheckInType(checkedIds.length >= data.length ? "full" : "partial");
       setSavedCount(checkedIds.length);
     }
+    // First visit detection — no check-ins ever
+    const { data: allCheckins } = await supabase.from("checkins").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
+    setIsFirstVisit(!allCheckins || allCheckins.length === 0);
   };
 
   const loadGroupHabits = async () => {
@@ -232,6 +268,18 @@ export default function Home() {
       return { user_id: m.user_id, streak: calcStreak(dates), checkedInToday: dates.includes(today), isMe, displayName };
     }));
     setGroupMembers(members);
+  };
+
+  const loadMemberProfile = async (member: any) => {
+    setSelectedMember(member);
+    setShowMemberProfile(true);
+    // Load their personal streak
+    const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", member.user_id).is("group_id", null).order("date", { ascending: false });
+    const dates = checkins ? [...new Set(checkins.map((r: any) => r.date))] as string[] : [];
+    setMemberStreak(calcStreak(dates));
+    // Load their habits
+    const { data: habits } = await supabase.from("habits").select("*").eq("user_id", member.user_id).is("group_id", null).order("position");
+    setMemberHabits(habits || []);
   };
 
   const triggerToast = (msg: string, big = false) => {
@@ -383,9 +431,10 @@ export default function Home() {
       setGroupCheckedInToday(true);
     }
     setCheckedInToday(true); setCheckInType(type); setSavedCount(doneCount);
+    setIsFirstVisit(false);
     await loadPersonalStreak(); await loadGroupStreak();
     if (currentGroup) { loadMembers(currentGroup.id); loadGroupHabits(); }
-    const hyp = HYPE_MESSAGES[doneCount - 1] || HYPE_MESSAGES[HYPE_MESSAGES.length - 1];
+    const hyp = HYPE_MESSAGES[hypeIndex] || HYPE_MESSAGES[HYPE_MESSAGES.length - 1];
     if (type === "full") { fireConfetti(); triggerToast(hyp.emoji + " " + hyp.title + " " + hyp.sub, true); }
     else triggerToast(hyp.emoji + " " + hyp.title + " — " + hyp.sub);
   };
@@ -443,24 +492,72 @@ export default function Home() {
     </div>
   );
 
+  // MEMBER PROFILE MODAL
+  const MemberProfile = () => (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowMemberProfile(false)}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 430, background: "#161620", borderRadius: "28px 28px 0 0", padding: "28px 24px 48px", maxHeight: "80vh", overflowY: "auto" }}>
+        <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, margin: "0 auto 24px" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
+          <div style={{ width: 64, height: 64, borderRadius: 20, background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 26, color: "white" }}>
+            {selectedMember?.displayName?.[0]?.toUpperCase()}
+          </div>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{selectedMember?.displayName}{selectedMember?.isMe ? " (you)" : ""}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{selectedMember?.checkedInToday ? "✅ Checked in today" : "⏳ Not checked in yet"}</div>
+          </div>
+        </div>
+
+        {/* Streaks */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+          <div style={{ background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16, textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 800, color: "#FF6B35" }}>{memberStreak} {streakEmoji(memberStreak)}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Personal Streak</div>
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 16, textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 800, color: "#4ECDC4" }}>{selectedMember?.streak} {streakEmoji(selectedMember?.streak || 0)}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Group Streak</div>
+          </div>
+        </div>
+
+        {/* Habits */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>Daily Habits</div>
+          {memberHabits.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {memberHabits.map((h: any) => (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, padding: "10px 14px" }}>
+                  <span style={{ fontSize: 20 }}>{h.icon}</span>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>{h.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: "16px 0" }}>No habits set yet</div>
+          )}
+        </div>
+
+        {/* Awards placeholder */}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Awards</div>
+          <div style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.1)", borderRadius: 16, padding: "20px", textAlign: "center" }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>🏆</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>Awards coming soon!</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   // WELCOME SCREEN
   if (screen === "welcome") return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
-      {/* Background glow blobs */}
       <div style={{ position: "absolute", top: "-20%", left: "-20%", width: "60%", height: "60%", background: "radial-gradient(circle, rgba(255,107,53,0.15) 0%, transparent 70%)", pointerEvents: "none" }} />
       <div style={{ position: "absolute", bottom: "-20%", right: "-20%", width: "60%", height: "60%", background: "radial-gradient(circle, rgba(255,62,108,0.12) 0%, transparent 70%)", pointerEvents: "none" }} />
       <div style={{ width: "100%", maxWidth: 430, padding: "0 32px", textAlign: "center", position: "relative", zIndex: 1 }}>
-        {/* Wolf + brand */}
-        <div style={{ fontSize: 80, marginBottom: 16, animation: "bounceIn 0.6s ease" }}>🐺</div>
+        <div style={{ fontSize: 80, marginBottom: 16 }}>🐺</div>
         <div style={{ fontSize: 48, fontWeight: 900, letterSpacing: "-0.02em", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", marginBottom: 8 }}>PACKD</div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "white", marginBottom: 8 }}>
-          Welcome, <span style={{ color: "#FF6B35" }}>{user?.user_metadata?.name || "champ"}</span>. 👊
-        </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", lineHeight: 1.7, marginBottom: 48 }}>
-          You showed up.<br />Now let's build something unbreakable.
-        </div>
-
-        {/* Feature pills */}
+        <div style={{ fontSize: 18, fontWeight: 700, color: "white", marginBottom: 8 }}>Welcome, <span style={{ color: "#FF6B35" }}>{user?.user_metadata?.name || "champ"}</span>. 👊</div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", lineHeight: 1.7, marginBottom: 48 }}>You showed up.<br />Now let's build something unbreakable.</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 48 }}>
           {[
             { icon: "🔥", title: "Daily streaks", sub: "Miss one. Start over. Simple." },
@@ -476,13 +573,9 @@ export default function Home() {
             </div>
           ))}
         </div>
-
-        <button onClick={() => setScreen("onboarding")} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 20, color: "white", fontSize: 17, fontWeight: 800, cursor: "pointer", letterSpacing: "0.02em", boxShadow: "0 8px 32px rgba(255,107,53,0.4)" }}>
-          Let's Go 🚀
-        </button>
+        <button onClick={() => setScreen("onboarding")} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 20, color: "white", fontSize: 17, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 32px rgba(255,107,53,0.4)" }}>Let's Go 🚀</button>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 16 }}>Takes less than 60 seconds to set up</div>
       </div>
-      <style>{`@keyframes bounceIn { 0% { transform: scale(0.3); opacity: 0; } 60% { transform: scale(1.1); } 80% { transform: scale(0.95); } 100% { transform: scale(1); opacity: 1; } }`}</style>
     </div>
   );
 
@@ -554,10 +647,11 @@ export default function Home() {
   return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", justifyContent: "center" }}>
       <div style={{ width: "100%", maxWidth: 430, position: "relative", minHeight: "100vh", background: "#0F0F18", paddingBottom: 80, overflow: "hidden" }}>
+        {showMemberProfile && <MemberProfile />}
         {confetti.map(c => (
           <div key={c.id} style={{ position: "fixed", top: "-10px", left: c.x + "%", width: 8, height: 8, background: c.color, borderRadius: 2, zIndex: 1000, animation: `fall 2.5s ${c.delay}s ease-in forwards`, pointerEvents: "none" }} />
         ))}
-        <style>{`@keyframes fall { 0% { transform: translateY(0) rotate(0deg); opacity:1; } 100% { transform: translateY(100vh) rotate(720deg); opacity:0; } } @keyframes popIn { 0% { transform: translateX(-50%) scale(0.7); opacity:0; } 60% { transform: translateX(-50%) scale(1.08); } 100% { transform: translateX(-50%) scale(1); opacity:1; } } @keyframes slideUp { 0% { transform: translateX(-50%) translateY(20px); opacity:0; } 100% { transform: translateX(-50%) translateY(0); opacity:1; } }`}</style>
+        <style>{`@keyframes fall { 0% { transform: translateY(0) rotate(0deg); opacity:1; } 100% { transform: translateY(100vh) rotate(720deg); opacity:0; } } @keyframes popIn { 0% { transform: translateX(-50%) scale(0.7); opacity:0; } 60% { transform: translateX(-50%) scale(1.08); } 100% { transform: translateX(-50%) scale(1); opacity:1; } } @keyframes slideUp { 0% { transform: translateX(-50%) translateY(20px); opacity:0; } 100% { transform: translateX(-50%) translateY(0); opacity:1; } } @keyframes slideUpSheet { 0% { transform: translateY(100%); } 100% { transform: translateY(0); } }`}</style>
 
         {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: toastBig ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "rgba(30,30,40,0.97)", color: "white", padding: toastBig ? "16px 28px" : "10px 20px", borderRadius: 100, fontSize: toastBig ? 15 : 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap", boxShadow: toastBig ? "0 8px 32px rgba(255,107,53,0.4)" : "0 4px 16px rgba(0,0,0,0.3)", animation: "slideUp 0.3s ease" }}>{toast}</div>}
         {showHomePopup && <div style={{ position: "fixed", top: 80, left: "50%", background: "rgba(255,107,53,0.15)", border: "1px solid rgba(255,107,53,0.3)", backdropFilter: "blur(12px)", color: "white", padding: "10px 20px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 998, whiteSpace: "nowrap", animation: "popIn 0.3s ease" }}>{homePopup}</div>}
@@ -569,9 +663,24 @@ export default function Home() {
         {activeTab === "home" && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
-              <div style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.2, marginBottom: 4 }}>Good morning,<br /><span style={{ color: "#FF6B35" }}>{user?.user_metadata?.name || "You"}.</span></div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>Keep the streak alive 🔥</div>
+              <div style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.2, marginBottom: 4 }}>
+                {getTimeLabel()},<br /><span style={{ color: "#FF6B35" }}>{user?.user_metadata?.name || "You"}.</span>
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{greeting.emoji} {greeting.line}</div>
             </div>
+
+            {/* First visit nudge banner */}
+            {isFirstVisit && (
+              <div style={{ margin: "0 20px 20px", background: "linear-gradient(135deg, rgba(78,205,196,0.12), rgba(78,205,196,0.06))", border: "1px solid rgba(78,205,196,0.25)", borderRadius: 20, padding: "16px 18px" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>👇 Day 1 starts NOW</div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>Tick your habits below and hit check-in to start your streak!</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setActiveTab("checkin")} style={{ flex: 1, padding: "10px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ Check In Now</button>
+                  <button onClick={() => setActiveTab("group")} style={{ flex: 1, padding: "10px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🐺 Join a Pack</button>
+                </div>
+              </div>
+            )}
+
             <div style={{ margin: "0 20px 20px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", borderRadius: 28, padding: 24 }}>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.8, fontWeight: 600 }}>Personal Streak</div>
               <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1 }}>{personalStreak}</div>
@@ -728,7 +837,7 @@ export default function Home() {
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Invite code</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: "#FF6B35", letterSpacing: "0.1em" }}>{currentGroup.invite_code}</div>
-                  <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(currentGroup.invite_code); triggerToast("Copied! ✅"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "rgba(255,255,255,0.4)", fontSize: 16, display: "flex", alignItems: "center" }}>
+                  <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(currentGroup.invite_code); triggerToast("Copied! ✅"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "rgba(255,255,255,0.4)", display: "flex", alignItems: "center" }}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -755,7 +864,7 @@ export default function Home() {
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
               {[...groupMembers].sort((a, b) => b.streak - a.streak).map((m, i) => (
-                <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 12, background: i === 0 ? "linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,62,108,0.08))" : "rgba(255,255,255,0.04)", border: "1px solid " + (i === 0 ? "rgba(255,107,53,0.2)" : "rgba(255,255,255,0.05)"), borderRadius: 18, padding: "14px 16px" }}>
+                <div key={m.user_id} onClick={() => loadMemberProfile(m)} style={{ display: "flex", alignItems: "center", gap: 12, background: i === 0 ? "linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,62,108,0.08))" : "rgba(255,255,255,0.04)", border: "1px solid " + (i === 0 ? "rgba(255,107,53,0.2)" : "rgba(255,255,255,0.05)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer" }}>
                   <div style={{ fontSize: 16, fontWeight: 800, width: 24, textAlign: "center" }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</div>
                   <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.displayName[0]}</div>
                   <div style={{ flex: 1 }}>
