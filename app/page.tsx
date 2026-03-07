@@ -152,10 +152,8 @@ export default function Home() {
     const { data } = await supabase.from("habits").select("*").eq("group_id", currentGroup.id).order("position");
     if (!data) return;
     setGroupHabits(data);
-    // Check which group habits are already checked in (personal overlap or direct group checkin)
     const { data: groupCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
     const groupCheckedIds = groupCheckins ? groupCheckins.map((c: any) => c.habit_id) : [];
-    // Also check personal habits for overlap
     const { data: personalCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
     const personalCheckedIds = personalCheckins ? personalCheckins.map((c: any) => c.habit_id) : [];
     const { data: personalHabits } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null);
@@ -169,7 +167,6 @@ export default function Home() {
   };
 
   const loadPersonalStreak = async () => {
-    const today = getToday();
     const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).is("group_id", null).order("date", { ascending: false });
     if (!data || data.length === 0) { setPersonalStreak(0); return; }
     const dates = [...new Set(data.map((r: any) => r.date))] as string[];
@@ -288,6 +285,16 @@ export default function Home() {
   };
 
   const joinGroup = async () => {
+    if (!joinCode.trim()) return;
+    const { data: group, error } = await supabase.from("groups").select().eq("invite_code", joinCode.toUpperCase()).single();
+    if (error || !group) { triggerToast("❌ Invalid invite code"); return; }
+    const { error: joinError } = await supabase.from("group_members").insert({ group_id: group.id, user_id: user.id, joined_at: new Date().toISOString() });
+    if (joinError) { triggerToast("❌ Already in this group!"); return; }
+    setCurrentGroup(group); setGroups([...groups, group]);
+    setShowJoinGroup(false); setJoinCode("");
+    loadMembers(group.id);
+    triggerToast("✅ Joined " + group.group_name + "!");
+  };
 
   const deleteGroup = async () => {
     if (!currentGroup) return;
@@ -310,16 +317,6 @@ export default function Home() {
     setCurrentGroup(null); setGroupMembers([]); setGroupHabits([]);
     setShowGroupDetail(false); setActiveTab("group");
     triggerToast("👋 Left the group");
-  };
-    if (!joinCode.trim()) return;
-    const { data: group, error } = await supabase.from("groups").select().eq("invite_code", joinCode.toUpperCase()).single();
-    if (error || !group) { triggerToast("❌ Invalid invite code"); return; }
-    const { error: joinError } = await supabase.from("group_members").insert({ group_id: group.id, user_id: user.id, joined_at: new Date().toISOString() });
-    if (joinError) { triggerToast("❌ Already in this group!"); return; }
-    setCurrentGroup(group); setGroups([...groups, group]);
-    setShowJoinGroup(false); setJoinCode("");
-    loadMembers(group.id);
-    triggerToast("✅ Joined " + group.group_name + "!");
   };
 
   const toggleHabit = (id: string, fromHome = false) => {
@@ -353,19 +350,16 @@ export default function Home() {
     const checkedHabits = habits.filter(h => h.checked);
     const groupHabitLabels = groupHabits.map(h => h.label);
     const overlappingHabits = checkedHabits.filter(h => groupHabitLabels.includes(h.label));
-
     await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).is("group_id", null);
     if (checkedHabits.length > 0) {
       await supabase.from("checkins").insert(checkedHabits.map(h => ({ user_id: user.id, group_id: null, date: today, habit_id: h.id, habits_completed: doneCount })));
     }
-
     if (currentGroup && overlappingHabits.length > 0) {
       await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
       const groupHabitMap = new Map(groupHabits.map(h => [h.label, h.id]));
       await supabase.from("checkins").insert(overlappingHabits.map(h => ({ user_id: user.id, group_id: currentGroup.id, date: today, habit_id: groupHabitMap.get(h.label), habits_completed: overlappingHabits.length })));
       setGroupCheckedInToday(true);
     }
-
     setCheckedInToday(true); setCheckInType(type); setSavedCount(doneCount);
     await loadPersonalStreak(); await loadGroupStreak();
     if (currentGroup) { loadMembers(currentGroup.id); loadGroupHabits(); }
@@ -377,10 +371,8 @@ export default function Home() {
   const doGroupCheckin = async () => {
     const today = getToday();
     const checkedGroupHabits = groupCheckinHabits.filter(h => h.checked && !h.fromPersonal);
-    if (checkedGroupHabits.length === 0) return;
+    if (checkedGroupHabits.length === 0 && !groupCheckinHabits.some(h => h.fromPersonal && h.checked)) return;
     await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
-    // Combine personal overlaps + new group checkins
-    const groupHabitLabels = groupHabits.map(h => h.label);
     const { data: personalCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
     const personalCheckedIds = personalCheckins ? personalCheckins.map((c: any) => c.habit_id) : [];
     const { data: personalHabits } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null);
@@ -489,7 +481,7 @@ export default function Home() {
             </div>
           ))}
         </div>
-        <button onClick={doGroupCheckin} disabled={groupCheckinHabits.filter(h => h.checked && !h.fromPersonal).length === 0 && !groupCheckinHabits.some(h => h.fromPersonal && h.checked)} style={{ ...btnPrimary, opacity: groupCheckinHabits.some(h => h.checked) ? 1 : 0.4 }}>
+        <button onClick={doGroupCheckin} style={{ ...btnPrimary, opacity: groupCheckinHabits.some(h => h.checked) ? 1 : 0.4 }}>
           {groupIsFull ? "🔥 Full Check-in!" : "⚡ Check-in (" + groupDoneCount + "/" + groupHabits.length + ")"}
         </button>
       </div>
@@ -598,13 +590,13 @@ export default function Home() {
                 <div style={{ fontSize: 12, color: "#FF6B35", fontWeight: 600, marginBottom: 16 }}>{selectedGroupHabits.length}/5 selected</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                   {presetHabits.map(h => {
-                    const selected = selectedGroupHabits.includes(h.id);
+                    const sel = selectedGroupHabits.includes(h.id);
                     return (
-                      <div key={h.id} onClick={() => toggleGroupHabitPreset(h.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: selected ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (selected ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 14, padding: "10px 14px", cursor: "pointer" }}>
+                      <div key={h.id} onClick={() => toggleGroupHabitPreset(h.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: sel ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (sel ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 14, padding: "10px 14px", cursor: "pointer" }}>
                         <div style={{ fontSize: 20 }}>{h.icon}</div>
                         <div style={{ flex: 1, fontSize: 13 }}>{h.label}</div>
-                        <div style={{ width: 20, height: 20, borderRadius: "50%", background: selected ? "#4ECDC4" : "transparent", border: "2px solid " + (selected ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          {selected && <span style={{ color: "white", fontSize: 10 }}>✓</span>}
+                        <div style={{ width: 20, height: 20, borderRadius: "50%", background: sel ? "#4ECDC4" : "transparent", border: "2px solid " + (sel ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {sel && <span style={{ color: "white", fontSize: 10 }}>✓</span>}
                         </div>
                       </div>
                     );
@@ -675,18 +667,19 @@ export default function Home() {
               </div>
             </div>
             {groupHabits.length > 0 && (
-              <div style={{ margin: "0 20px 16px" }}>
+              <div style={{ margin: "0 20px 12px" }}>
                 <button onClick={() => setShowGroupCheckin(true)} style={{ width: "100%", padding: 14, background: groupCheckedInToday ? "rgba(78,205,196,0.1)" : "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: groupCheckedInToday ? "1px solid rgba(78,205,196,0.3)" : "none", borderRadius: 16, color: groupCheckedInToday ? "#4ECDC4" : "white", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
                   {groupCheckedInToday ? "✅ Checked in — update?" : "⚡ Check-in"}
                 </button>
               </div>
             )}
+            <div style={{ margin: "0 20px 16px", display: "flex", gap: 10 }}>
+              {currentGroup.created_by === user.id
+                ? <button onClick={deleteGroup} style={{ flex: 1, padding: "10px", background: "rgba(255,62,108,0.1)", border: "1px solid rgba(255,62,108,0.2)", borderRadius: 14, color: "#FF3E6C", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🗑️ Delete Group</button>
+                : <button onClick={leaveGroup} style={{ flex: 1, padding: "10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, color: "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>👋 Leave Group</button>
+              }
+            </div>
             <div style={{ padding: "0 24px", marginBottom: 12 }}>
-              <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-                {currentGroup.created_by === user.id
-                  ? <button onClick={deleteGroup} style={{ flex: 1, padding: "10px", background: "rgba(255,62,108,0.1)", border: "1px solid rgba(255,62,108,0.2)", borderRadius: 14, color: "#FF3E6C", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🗑️ Delete Group</button>
-                  : <button onClick={leaveGroup} style={{ flex: 1, padding: "10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, color: "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>👋 Leave Group</button>}
-              </div>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Leaderboard 🏆</div>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -745,7 +738,7 @@ export default function Home() {
             </div>
             <div style={{ padding: "0 20px" }}>
               <button onClick={doCheckin} disabled={doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: (doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)) ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
-                {doneCount === 0 ? "Tick at least one habit first" : isFull ? "✅ All done today!" : (checkedInToday && doneCount === savedCount) ? "✅ Saved!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
+                {doneCount === 0 ? "Tick at least one habit first" : isFull ? "✅ All done today!" : (checkedInToday && doneCount === savedCount) ? "✅ Saved!" : "⚡ Check-in (" + doneCount + "/" + habits.length + ")"}
               </button>
             </div>
           </div>
