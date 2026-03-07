@@ -97,6 +97,7 @@ export default function Home() {
   const [homePopup, setHomePopup] = useState("");
   const [showHomePopup, setShowHomePopup] = useState(false);
   const [confetti, setConfetti] = useState<{id:number,x:number,color:string,delay:number}[]>([]);
+  const [isNewUser, setIsNewUser] = useState(false);
 
   const doneCount = habits.filter((h) => h.checked).length;
   const progress = habits.length > 0 ? doneCount / habits.length : 0;
@@ -110,19 +111,18 @@ export default function Home() {
       if (session?.user) { setUser(session.user); setScreen("app"); }
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) { setUser(session.user); setScreen("app"); }
+      if (session?.user) { setUser(session.user); }
       else { setUser(null); setScreen("login"); }
     });
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (user) { ensureUserRecord(); loadUserHabits(); loadPresetHabits(); loadGroups(); loadPersonalStreak(); }
+    if (user) { ensureUserRecord(); loadPresetHabits(); loadGroups(); loadPersonalStreak(); checkIfNewUser(); }
   }, [user]);
 
   useEffect(() => { if (user && currentGroup) { loadGroupStreak(); loadGroupHabits(); } }, [currentGroup]);
 
-  // Re-sync group checkin habits whenever personal habits change
   useEffect(() => {
     if (groupHabits.length > 0) {
       const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
@@ -133,6 +133,18 @@ export default function Home() {
       })));
     }
   }, [habits]);
+
+  const checkIfNewUser = async () => {
+    const { data } = await supabase.from("habits").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
+    if (!data || data.length === 0) {
+      setIsNewUser(true);
+      setScreen("welcome");
+    } else {
+      setIsNewUser(false);
+      loadUserHabits();
+      setScreen("app");
+    }
+  };
 
   const ensureUserRecord = async () => {
     const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
@@ -147,7 +159,7 @@ export default function Home() {
   const loadUserHabits = async () => {
     const today = getToday();
     const { data } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null).order("position");
-    if (!data || data.length === 0) { setScreen("onboarding"); return; }
+    if (!data || data.length === 0) return;
     const { data: checkins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
     const checkedIds = checkins ? checkins.map((c: any) => c.habit_id) : [];
     setHabits(data.map((h: any) => ({ ...h, checked: checkedIds.includes(h.id) })));
@@ -166,7 +178,6 @@ export default function Home() {
     setGroupHabits(data);
     const { data: groupCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
     const groupCheckedIds = groupCheckins ? groupCheckins.map((c: any) => c.habit_id) : [];
-    // Use current in-memory habits state for overlap (not DB) so home tab ticks reflect immediately
     const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
     setGroupCheckedInToday(groupCheckedIds.length > 0 || data.some((gh: any) => checkedPersonalLabels.includes(gh.label)));
     setGroupCheckinHabits(data.map((gh: any) => ({
@@ -431,14 +442,58 @@ export default function Home() {
     </div>
   );
 
+  // WELCOME SCREEN
+  if (screen === "welcome") return (
+    <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+      {/* Background glow blobs */}
+      <div style={{ position: "absolute", top: "-20%", left: "-20%", width: "60%", height: "60%", background: "radial-gradient(circle, rgba(255,107,53,0.15) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: "-20%", right: "-20%", width: "60%", height: "60%", background: "radial-gradient(circle, rgba(255,62,108,0.12) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ width: "100%", maxWidth: 430, padding: "0 32px", textAlign: "center", position: "relative", zIndex: 1 }}>
+        {/* Wolf + brand */}
+        <div style={{ fontSize: 80, marginBottom: 16, animation: "bounceIn 0.6s ease" }}>🐺</div>
+        <div style={{ fontSize: 48, fontWeight: 900, letterSpacing: "-0.02em", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", marginBottom: 8 }}>PACKD</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "white", marginBottom: 8 }}>
+          Welcome, <span style={{ color: "#FF6B35" }}>{user?.user_metadata?.name || "champ"}</span>. 👊
+        </div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", lineHeight: 1.7, marginBottom: 48 }}>
+          You showed up.<br />Now let's build something unbreakable.
+        </div>
+
+        {/* Feature pills */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 48 }}>
+          {[
+            { icon: "🔥", title: "Daily streaks", sub: "Miss one. Start over. Simple." },
+            { icon: "🐺", title: "Your Pack", sub: "Your crew keeps you honest." },
+            { icon: "👑", title: "Leaderboard", sub: "Compete. Win. Repeat." },
+          ].map((f, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 18, padding: "14px 18px", textAlign: "left" }}>
+              <div style={{ fontSize: 28, width: 48, height: 48, background: "rgba(255,107,53,0.1)", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{f.icon}</div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>{f.title}</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{f.sub}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button onClick={() => setScreen("onboarding")} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 20, color: "white", fontSize: 17, fontWeight: 800, cursor: "pointer", letterSpacing: "0.02em", boxShadow: "0 8px 32px rgba(255,107,53,0.4)" }}>
+          Let's Go 🚀
+        </button>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 16 }}>Takes less than 60 seconds to set up</div>
+      </div>
+      <style>{`@keyframes bounceIn { 0% { transform: scale(0.3); opacity: 0; } 60% { transform: scale(1.1); } 80% { transform: scale(0.95); } 100% { transform: scale(1); opacity: 1; } }`}</style>
+    </div>
+  );
+
   if (screen === "onboarding") return (
     <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
       <div style={{ textAlign: "center", padding: "40px 24px 20px" }}>
-        <div style={{ fontSize: 40, marginBottom: 8 }}>🐺</div>
-        <div style={{ fontSize: 24, fontWeight: 800, color: "#FF6B35" }}>Pick your habits</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", marginBottom: 8, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em" }}>Step 1 of 1</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: "#FF6B35" }}>Pick your habits</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>What are you committing to daily?</div>
       </div>
       {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "rgba(30,30,40,0.97)", color: "white", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
-      <HabitPicker selected={selectedPresets} onToggle={togglePreset} onSave={savePersonalHabits} onBack={() => {}} title="" subtitle="Choose up to 5 habits to track daily" saveLabel="Save & Start Tracking 🐺" />
+      <HabitPicker selected={selectedPresets} onToggle={togglePreset} onSave={savePersonalHabits} onBack={() => setScreen("welcome")} title="" subtitle="Choose up to 5 habits to track daily" saveLabel="Save & Start Tracking 🐺" />
     </div>
   );
 
