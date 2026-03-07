@@ -955,6 +955,7 @@ export default function Home() {
               }} style={{ width: "100%", padding: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>
                 ✏️ Manage My Habits
               </button>
+              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.1)", borderRadius: 20, padding: "20px", marginBottom: 10 }}><div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>🏆 Awards</div><div style={{ textAlign: "center", padding: "12px 0" }}><div style={{ fontSize: 36, marginBottom: 8 }}>🏆</div><div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>Awards coming soon!</div><div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>Earn badges for streaks, consistency &amp; more</div></div></div>
               <button onClick={handleSignOut} style={{ width: "100%", padding: 16, background: "rgba(255,62,108,0.1)", border: "1px solid rgba(255,62,108,0.2)", borderRadius: 16, color: "#FF3E6C", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign Out</button>
             </div>
           </div>
