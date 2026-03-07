@@ -87,6 +87,7 @@ export default function Home() {
   const [personalStreak, setPersonalStreak] = useState(0);
   const [groupStreak, setGroupStreak] = useState(0);
   const [checkedInToday, setCheckedInToday] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
   const [checkInType, setCheckInType] = useState<"full"|"partial"|null>(null);
   const [weekDays, setWeekDays] = useState(WEEK.map((d) => ({ label: d, filled: false, today: false })));
   const [homePopup, setHomePopup] = useState("");
@@ -126,6 +127,7 @@ export default function Home() {
     const todayRow = data.find((r: any) => r.date === today);
     if (todayRow) {
       setCheckedInToday(true);
+    setSavedCount(doneCount);
       setCheckInType(todayRow.habits_completed >= habits.length ? "full" : "partial");
       setHabits((prev) => prev.map((h, i) => ({ ...h, checked: i < todayRow.habits_completed })));
     }
@@ -268,6 +270,7 @@ export default function Home() {
       if (error) { triggerToast("❌ Error saving check-in"); return; }
     }
     setCheckedInToday(true);
+    setSavedCount(doneCount);
     setCheckInType(type);
     await loadPersonalStreak();
     await loadGroupStreak();
@@ -508,7 +511,7 @@ export default function Home() {
               ))}
             </div>
             <div style={{ padding: "0 20px" }}>
-              <button onClick={doCheckin} disabled={doneCount === 0} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: doneCount === 0 ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: doneCount === 0 ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: doneCount === 0 ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
+              <button onClick={doCheckin} disabled={doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: doneCount === 0 ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: doneCount === 0 ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: doneCount === 0 ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
                 {doneCount === 0 ? "Tick at least one habit first" : isFull ? "🔥 Full Check-In!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
               </button>
             </div>
