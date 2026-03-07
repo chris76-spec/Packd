@@ -82,7 +82,9 @@ export default function Home() {
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showJoinGroup, setShowJoinGroup] = useState(false);
   const [showGroupDetail, setShowGroupDetail] = useState(false);
+  const [showGroupCheckin, setShowGroupCheckin] = useState(false);
   const [showGroupHabitPicker, setShowGroupHabitPicker] = useState(false);
+  const [groupCheckinHabits, setGroupCheckinHabits] = useState<any[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [personalStreak, setPersonalStreak] = useState(0);
@@ -90,6 +92,7 @@ export default function Home() {
   const [checkedInToday, setCheckedInToday] = useState(false);
   const [checkInType, setCheckInType] = useState<"full"|"partial"|null>(null);
   const [savedCount, setSavedCount] = useState(0);
+  const [groupCheckedInToday, setGroupCheckedInToday] = useState(false);
   const [weekDays, setWeekDays] = useState(WEEK.map((d) => ({ label: d, filled: false, today: false })));
   const [homePopup, setHomePopup] = useState("");
   const [showHomePopup, setShowHomePopup] = useState(false);
@@ -99,6 +102,8 @@ export default function Home() {
   const progress = habits.length > 0 ? doneCount / habits.length : 0;
   const isFull = habits.length > 0 && doneCount === habits.length;
   const hype = doneCount > 0 ? HYPE_MESSAGES[Math.min(doneCount - 1, HYPE_MESSAGES.length - 1)] : null;
+  const groupDoneCount = groupCheckinHabits.filter(h => h.checked).length;
+  const groupIsFull = groupHabits.length > 0 && groupDoneCount === groupHabits.length;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -112,22 +117,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (user) {
-      ensureUserRecord();
-      loadUserHabits();
-      loadPresetHabits();
-      loadGroups();
-      loadPersonalStreak();
-    }
+    if (user) { ensureUserRecord(); loadUserHabits(); loadPresetHabits(); loadGroups(); loadPersonalStreak(); }
   }, [user]);
 
   useEffect(() => { if (user && currentGroup) { loadGroupStreak(); loadGroupHabits(); } }, [currentGroup]);
 
   const ensureUserRecord = async () => {
     const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
-    if (!data) {
-      await supabase.from("users").insert({ id: user.id, name: user.user_metadata?.name || "", email: user.email });
-    }
+    if (!data) await supabase.from("users").insert({ id: user.id, name: user.user_metadata?.name || "", email: user.email });
   };
 
   const loadPresetHabits = async () => {
@@ -138,11 +135,8 @@ export default function Home() {
   const loadUserHabits = async () => {
     const today = getToday();
     const { data } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null).order("position");
-    if (!data || data.length === 0) {
-      setScreen("onboarding");
-      return;
-    }
-    const { data: checkins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today);
+    if (!data || data.length === 0) { setScreen("onboarding"); return; }
+    const { data: checkins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
     const checkedIds = checkins ? checkins.map((c: any) => c.habit_id) : [];
     setHabits(data.map((h: any) => ({ ...h, checked: checkedIds.includes(h.id) })));
     if (checkedIds.length > 0) {
@@ -154,8 +148,24 @@ export default function Home() {
 
   const loadGroupHabits = async () => {
     if (!currentGroup) return;
+    const today = getToday();
     const { data } = await supabase.from("habits").select("*").eq("group_id", currentGroup.id).order("position");
-    if (data) setGroupHabits(data);
+    if (!data) return;
+    setGroupHabits(data);
+    // Check which group habits are already checked in (personal overlap or direct group checkin)
+    const { data: groupCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
+    const groupCheckedIds = groupCheckins ? groupCheckins.map((c: any) => c.habit_id) : [];
+    // Also check personal habits for overlap
+    const { data: personalCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
+    const personalCheckedIds = personalCheckins ? personalCheckins.map((c: any) => c.habit_id) : [];
+    const { data: personalHabits } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null);
+    const checkedPersonalLabels = personalHabits?.filter((h: any) => personalCheckedIds.includes(h.id)).map((h: any) => h.label) || [];
+    setGroupCheckedInToday(groupCheckedIds.length > 0 || data.some((gh: any) => checkedPersonalLabels.includes(gh.label)));
+    setGroupCheckinHabits(data.map((gh: any) => ({
+      ...gh,
+      checked: groupCheckedIds.includes(gh.id) || checkedPersonalLabels.includes(gh.label),
+      fromPersonal: checkedPersonalLabels.includes(gh.label),
+    })));
   };
 
   const loadPersonalStreak = async () => {
@@ -185,11 +195,7 @@ export default function Home() {
     if (error || !data || data.length === 0) return;
     const groupIds = data.map((d: any) => d.group_id);
     const { data: groupData } = await supabase.from("groups").select("*").in("id", groupIds);
-    if (groupData && groupData.length > 0) {
-      setGroups(groupData);
-      setCurrentGroup(groupData[0]);
-      loadMembers(groupData[0].id);
-    }
+    if (groupData && groupData.length > 0) { setGroups(groupData); setCurrentGroup(groupData[0]); loadMembers(groupData[0].id); }
   };
 
   const loadMembers = async (groupId: string) => {
@@ -201,14 +207,10 @@ export default function Home() {
     const members = await Promise.all(memberData.map(async (m: any) => {
       const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", m.user_id).eq("group_id", groupId).order("date", { ascending: false });
       const dates = checkins ? [...new Set(checkins.map((r: any) => r.date))] as string[] : [];
-      const memberStreak = calcStreak(dates);
-      const checkedToday = dates.includes(today);
       const isMe = m.user_id === user.id;
       const userRecord = userData?.find((u: any) => u.id === m.user_id);
-      const displayName = isMe
-        ? (user?.user_metadata?.name || userRecord?.name || user?.email?.split("@")[0] || "You")
-        : (FAKE_NAMES[m.user_id] || userRecord?.name || userRecord?.email?.split("@")[0] || "User");
-      return { user_id: m.user_id, streak: memberStreak, checkedInToday: checkedToday, isMe, displayName };
+      const displayName = isMe ? (user?.user_metadata?.name || userRecord?.name || user?.email?.split("@")[0] || "You") : (FAKE_NAMES[m.user_id] || userRecord?.name || userRecord?.email?.split("@")[0] || "User");
+      return { user_id: m.user_id, streak: calcStreak(dates), checkedInToday: dates.includes(today), isMe, displayName };
     }));
     setGroupMembers(members);
   };
@@ -229,7 +231,7 @@ export default function Home() {
     if (isSignUp) {
       const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
       if (error) { triggerToast("❌ " + error.message); setLoading(false); return; }
-      if (data.user) { await supabase.from("users").upsert({ id: data.user.id, name, email }); }
+      if (data.user) await supabase.from("users").upsert({ id: data.user.id, name, email });
       triggerToast("✅ Account created! Please sign in.");
       setIsSignUp(false);
     } else {
@@ -244,11 +246,10 @@ export default function Home() {
   const savePersonalHabits = async (ids: string[]) => {
     const selected = presetHabits.filter(h => ids.includes(h.id));
     const toInsert = selected.map((h, i) => ({ user_id: user.id, group_id: null, icon: h.icon, label: h.label, category: h.category, position: i }));
-    if (customHabitLabel.trim()) {
-      toInsert.push({ user_id: user.id, group_id: null, icon: customHabitIcon, label: customHabitLabel.trim(), category: "custom", position: toInsert.length });
-    }
+    if (customHabitLabel.trim()) toInsert.push({ user_id: user.id, group_id: null, icon: customHabitIcon, label: customHabitLabel.trim(), category: "custom", position: toInsert.length });
     await supabase.from("habits").delete().eq("user_id", user.id).is("group_id", null);
     await supabase.from("habits").insert(toInsert);
+    setCustomHabitLabel(""); setCustomHabitIcon("⭐"); setShowAddCustom(false);
     await loadUserHabits();
     setShowManageHabits(false);
     setScreen("app");
@@ -256,11 +257,19 @@ export default function Home() {
   };
 
   const togglePreset = (id: string) => {
-    setSelectedPresets(prev => prev.includes(id) ? prev.filter(p => p !== id) : prev.length < 5 ? [...prev, id] : prev);
+    if (!selectedPresets.includes(id) && selectedPresets.length >= 5) {
+      triggerToast("Max 5 habits! Swap one out first 😊");
+      return;
+    }
+    setSelectedPresets(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   };
 
   const toggleGroupHabitPreset = (id: string) => {
-    setSelectedGroupHabits(prev => prev.includes(id) ? prev.filter(p => p !== id) : prev.length < 5 ? [...prev, id] : prev);
+    if (!selectedGroupHabits.includes(id) && selectedGroupHabits.length >= 5) {
+      triggerToast("Max 5 group habits! Swap one out first 😊");
+      return;
+    }
+    setSelectedGroupHabits(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   };
 
   const createGroup = async () => {
@@ -310,83 +319,107 @@ export default function Home() {
     }
   };
 
+  const toggleGroupCheckinHabit = (id: string) => {
+    setGroupCheckinHabits(prev => prev.map(h => h.id === id && !h.fromPersonal ? { ...h, checked: !h.checked } : h));
+  };
+
   const doCheckin = async () => {
     if (doneCount === 0) return;
     const today = getToday();
     const type = isFull ? "full" : "partial";
     const checkedHabits = habits.filter(h => h.checked);
-
-    // Find which checked habits overlap with group habits
     const groupHabitLabels = groupHabits.map(h => h.label);
     const overlappingHabits = checkedHabits.filter(h => groupHabitLabels.includes(h.label));
 
-    // Delete today's personal checkins and reinsert
     await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).is("group_id", null);
-    await supabase.from("checkins").insert(checkedHabits.map(h => ({ user_id: user.id, group_id: null, date: today, habit_id: h.id, habits_completed: doneCount })));
-
-    // If overlapping habits exist, save group checkins too
-    if (currentGroup && overlappingHabits.length > 0) {
-      await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
-      await supabase.from("checkins").insert(overlappingHabits.map(h => ({ user_id: user.id, group_id: currentGroup.id, date: today, habit_id: h.id, habits_completed: overlappingHabits.length })));
+    if (checkedHabits.length > 0) {
+      await supabase.from("checkins").insert(checkedHabits.map(h => ({ user_id: user.id, group_id: null, date: today, habit_id: h.id, habits_completed: doneCount })));
     }
 
-    setCheckedInToday(true);
-    setCheckInType(type);
-    setSavedCount(doneCount);
-    await loadPersonalStreak();
-    await loadGroupStreak();
-    if (currentGroup) loadMembers(currentGroup.id);
+    if (currentGroup && overlappingHabits.length > 0) {
+      await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
+      const groupHabitMap = new Map(groupHabits.map(h => [h.label, h.id]));
+      await supabase.from("checkins").insert(overlappingHabits.map(h => ({ user_id: user.id, group_id: currentGroup.id, date: today, habit_id: groupHabitMap.get(h.label), habits_completed: overlappingHabits.length })));
+      setGroupCheckedInToday(true);
+    }
+
+    setCheckedInToday(true); setCheckInType(type); setSavedCount(doneCount);
+    await loadPersonalStreak(); await loadGroupStreak();
+    if (currentGroup) { loadMembers(currentGroup.id); loadGroupHabits(); }
     const hyp = HYPE_MESSAGES[doneCount - 1] || HYPE_MESSAGES[HYPE_MESSAGES.length - 1];
     if (type === "full") { fireConfetti(); triggerToast(hyp.emoji + " " + hyp.title + " " + hyp.sub, true); }
     else triggerToast(hyp.emoji + " " + hyp.title + " — " + hyp.sub);
+  };
+
+  const doGroupCheckin = async () => {
+    const today = getToday();
+    const checkedGroupHabits = groupCheckinHabits.filter(h => h.checked && !h.fromPersonal);
+    if (checkedGroupHabits.length === 0) return;
+    await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
+    // Combine personal overlaps + new group checkins
+    const groupHabitLabels = groupHabits.map(h => h.label);
+    const { data: personalCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
+    const personalCheckedIds = personalCheckins ? personalCheckins.map((c: any) => c.habit_id) : [];
+    const { data: personalHabits } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null);
+    const checkedPersonalLabels = personalHabits?.filter((h: any) => personalCheckedIds.includes(h.id)).map((h: any) => h.label) || [];
+    const overlapGroupHabits = groupHabits.filter(gh => checkedPersonalLabels.includes(gh.label));
+    const allGroupCheckins = [...new Map([...overlapGroupHabits, ...checkedGroupHabits].map(h => [h.id, h])).values()];
+    await supabase.from("checkins").insert(allGroupCheckins.map(h => ({ user_id: user.id, group_id: currentGroup.id, date: today, habit_id: h.id, habits_completed: allGroupCheckins.length })));
+    setGroupCheckedInToday(true);
+    await loadGroupStreak();
+    loadMembers(currentGroup.id);
+    loadGroupHabits();
+    setShowGroupCheckin(false);
+    triggerToast("🐺 Group check-in saved!");
   };
 
   const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "white", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" };
   const btnPrimary: React.CSSProperties = { width: "100%", padding: "14px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 };
   const btnSecondary: React.CSSProperties = { width: "100%", padding: "12px", background: "none", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" };
 
-  // ONBOARDING SCREEN
-  if (screen === "onboarding") return (
-    <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 430, padding: "40px 24px", background: "#0F0F18" }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>🐺</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: "#FF6B35" }}>Pick your habits</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 8 }}>Choose up to 5 habits to track daily</div>
-          <div style={{ fontSize: 13, color: "#FF6B35", fontWeight: 600, marginTop: 4 }}>{selectedPresets.length}/5 selected</div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-          {presetHabits.map(h => {
-            const selected = selectedPresets.includes(h.id);
-            return (
-              <div key={h.id} onClick={() => togglePreset(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: selected ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (selected ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 16, padding: "12px 16px", cursor: "pointer", transition: "all 0.2s" }}>
-                <div style={{ fontSize: 22 }}>{h.icon}</div>
-                <div style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{h.label}</div>
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: selected ? "#4ECDC4" : "transparent", border: "2px solid " + (selected ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {selected && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
-                </div>
+  const HabitPicker = ({ selected, onToggle, onSave, onBack, title, subtitle, saveLabel }: any) => (
+    <div style={{ maxWidth: 430, margin: "0 auto", padding: "24px" }}>
+      <button onClick={onBack} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 16, padding: 0 }}>← Back</button>
+      <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>{title}</div>
+      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>{subtitle}</div>
+      <div style={{ fontSize: 13, color: "#FF6B35", fontWeight: 600, marginBottom: 20 }}>{selected.length}/5 selected</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+        {presetHabits.map((h: any) => {
+          const sel = selected.includes(h.id);
+          return (
+            <div key={h.id} onClick={() => onToggle(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: sel ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (sel ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 16, padding: "12px 16px", cursor: "pointer", transition: "all 0.2s" }}>
+              <div style={{ fontSize: 22 }}>{h.icon}</div>
+              <div style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{h.label}</div>
+              <div style={{ width: 22, height: 22, borderRadius: "50%", background: sel ? "#4ECDC4" : "transparent", border: "2px solid " + (sel ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {sel && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
               </div>
-            );
-          })}
-        </div>
-        {showAddCustom ? (
-          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Add custom habit</div>
-            <input value={customHabitIcon} onChange={e => setCustomHabitIcon(e.target.value)} placeholder="Icon (emoji)" style={{ ...inputStyle, marginBottom: 8 }} />
-            <input value={customHabitLabel} onChange={e => setCustomHabitLabel(e.target.value)} placeholder="Habit name" style={inputStyle} />
-            <button onClick={() => setShowAddCustom(false)} style={btnSecondary}>Done</button>
-          </div>
-        ) : (
-          selectedPresets.length < 5 && <button onClick={() => setShowAddCustom(true)} style={{ ...btnSecondary, marginBottom: 16 }}>+ Add custom habit</button>
-        )}
-        <button onClick={() => savePersonalHabits(selectedPresets)} disabled={selectedPresets.length === 0 && !customHabitLabel.trim()} style={{ ...btnPrimary, opacity: selectedPresets.length === 0 && !customHabitLabel.trim() ? 0.4 : 1 }}>
-          Save & Start Tracking 🐺
-        </button>
+            </div>
+          );
+        })}
       </div>
+      {showAddCustom ? (
+        <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Add custom habit</div>
+          <input value={customHabitIcon} onChange={e => setCustomHabitIcon(e.target.value)} placeholder="Icon (emoji)" style={{ ...inputStyle, marginBottom: 8 }} />
+          <input value={customHabitLabel} onChange={e => setCustomHabitLabel(e.target.value)} placeholder="Habit name" style={inputStyle} />
+          <button onClick={() => setShowAddCustom(false)} style={btnSecondary}>Done</button>
+        </div>
+      ) : selected.length < 5 && <button onClick={() => setShowAddCustom(true)} style={{ ...btnSecondary, marginBottom: 16 }}>+ Add custom habit</button>}
+      <button onClick={() => onSave(selected)} disabled={selected.length === 0 && !customHabitLabel.trim()} style={{ ...btnPrimary, opacity: selected.length === 0 && !customHabitLabel.trim() ? 0.4 : 1 }}>{saveLabel}</button>
     </div>
   );
 
-  // LOGIN SCREEN
+  if (screen === "onboarding") return (
+    <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
+      <div style={{ textAlign: "center", padding: "40px 24px 20px" }}>
+        <div style={{ fontSize: 40, marginBottom: 8 }}>🐺</div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: "#FF6B35" }}>Pick your habits</div>
+      </div>
+      {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "rgba(30,30,40,0.97)", color: "white", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
+      <HabitPicker selected={selectedPresets} onToggle={togglePreset} onSave={savePersonalHabits} onBack={() => {}} title="" subtitle="Choose up to 5 habits to track daily" saveLabel="Save & Start Tracking 🐺" />
+    </div>
+  );
+
   if (screen === "login") return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ width: 360, padding: "40px 32px", background: "#0F0F18", borderRadius: 28, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -405,40 +438,36 @@ export default function Home() {
     </div>
   );
 
-  // MANAGE HABITS SCREEN
   if (showManageHabits) return (
     <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
+      {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "rgba(30,30,40,0.97)", color: "white", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
+      <HabitPicker selected={selectedPresets} onToggle={togglePreset} onSave={savePersonalHabits} onBack={() => setShowManageHabits(false)} title="Manage Habits" subtitle="Select up to 5 habits" saveLabel="Save Habits ✅" />
+    </div>
+  );
+
+  if (showGroupCheckin && currentGroup) return (
+    <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
+      {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "rgba(30,30,40,0.97)", color: "white", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
       <div style={{ maxWidth: 430, margin: "0 auto", padding: "24px" }}>
-        <button onClick={() => setShowManageHabits(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 16, padding: 0 }}>← Back</button>
-        <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Manage Habits</div>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Select up to 5 habits</div>
-        <div style={{ fontSize: 13, color: "#FF6B35", fontWeight: 600, marginBottom: 20 }}>{selectedPresets.length}/5 selected</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-          {presetHabits.map(h => {
-            const selected = selectedPresets.includes(h.id);
-            return (
-              <div key={h.id} onClick={() => togglePreset(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: selected ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (selected ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 16, padding: "12px 16px", cursor: "pointer", transition: "all 0.2s" }}>
-                <div style={{ fontSize: 22 }}>{h.icon}</div>
-                <div style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{h.label}</div>
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: selected ? "#4ECDC4" : "transparent", border: "2px solid " + (selected ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {selected && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
-                </div>
+        <button onClick={() => setShowGroupCheckin(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 16, padding: 0 }}>← Back</button>
+        <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>🐺 {currentGroup.group_name}</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>Group check-in for today</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+          {groupCheckinHabits.map((h: any) => (
+            <div key={h.id} onClick={() => toggleGroupCheckinHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: h.fromPersonal ? "default" : "pointer", opacity: h.fromPersonal ? 0.7 : 1 }}>
+              <div style={{ fontSize: 22 }}>{h.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.6 : 1 }}>{h.label}</div>
+                {h.fromPersonal && <div style={{ fontSize: 10, color: "#4ECDC4", marginTop: 2 }}>✅ Already done personally</div>}
               </div>
-            );
-          })}
+              <div style={{ width: 24, height: 24, borderRadius: "50%", background: h.checked ? "#4ECDC4" : "transparent", border: "2px solid " + (h.checked ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {h.checked && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
+              </div>
+            </div>
+          ))}
         </div>
-        {showAddCustom ? (
-          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Add custom habit</div>
-            <input value={customHabitIcon} onChange={e => setCustomHabitIcon(e.target.value)} placeholder="Icon (emoji)" style={{ ...inputStyle, marginBottom: 8 }} />
-            <input value={customHabitLabel} onChange={e => setCustomHabitLabel(e.target.value)} placeholder="Habit name" style={inputStyle} />
-            <button onClick={() => setShowAddCustom(false)} style={btnSecondary}>Done</button>
-          </div>
-        ) : (
-          selectedPresets.length < 5 && <button onClick={() => setShowAddCustom(true)} style={{ ...btnSecondary, marginBottom: 16 }}>+ Add custom habit</button>
-        )}
-        <button onClick={() => savePersonalHabits(selectedPresets)} disabled={selectedPresets.length === 0 && !customHabitLabel.trim()} style={{ ...btnPrimary, opacity: selectedPresets.length === 0 && !customHabitLabel.trim() ? 0.4 : 1 }}>
-          Save Habits ✅
+        <button onClick={doGroupCheckin} disabled={groupCheckinHabits.filter(h => h.checked && !h.fromPersonal).length === 0 && !groupCheckinHabits.some(h => h.fromPersonal && h.checked)} style={{ ...btnPrimary, opacity: groupCheckinHabits.some(h => h.checked) ? 1 : 0.4 }}>
+          {groupIsFull ? "🔥 Full Group Check-In!" : "⚡ Save Group Check-In (" + groupDoneCount + "/" + groupHabits.length + ")"}
         </button>
       </div>
     </div>
@@ -622,7 +651,14 @@ export default function Home() {
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#FF6B35", letterSpacing: "0.1em" }}>{currentGroup.invite_code}</div>
               </div>
             </div>
-            <div style={{ padding: "0 24px", marginBottom: 12, marginTop: 8 }}>
+            {groupHabits.length > 0 && (
+              <div style={{ margin: "0 20px 16px" }}>
+                <button onClick={() => setShowGroupCheckin(true)} style={{ width: "100%", padding: 14, background: groupCheckedInToday ? "rgba(78,205,196,0.1)" : "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: groupCheckedInToday ? "1px solid rgba(78,205,196,0.3)" : "none", borderRadius: 16, color: groupCheckedInToday ? "#4ECDC4" : "white", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  {groupCheckedInToday ? "✅ Group checked in — update?" : "⚡ Group Check-In"}
+                </button>
+              </div>
+            )}
+            <div style={{ padding: "0 24px", marginBottom: 12 }}>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Leaderboard 🏆</div>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -652,11 +688,7 @@ export default function Home() {
               <div style={{ fontSize: 13, color: isFull ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
                 {hype ? hype.sub : "Tick what you've done — even 1 habit keeps your streak alive!"}
               </div>
-              {currentGroup && groupHabits.length > 0 && (
-                <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-                  Matching habits count for <span style={{ color: "#FF6B35", fontWeight: 600 }}>{currentGroup.group_name}</span> too!
-                </div>
-              )}
+              {currentGroup && groupHabits.length > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Matching habits count for <span style={{ color: "#FF6B35", fontWeight: 600 }}>{currentGroup.group_name}</span> too!</div>}
             </div>
             <div style={{ display: "flex", justifyContent: "center", margin: "0 0 20px" }}>
               <svg width="120" height="120" viewBox="0 0 120 120">
@@ -670,7 +702,7 @@ export default function Home() {
               {habits.map((h) => {
                 const isGroupHabit = groupHabits.some(gh => gh.label === h.label);
                 return (
-                  <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkInType === "full" ? "default" : "pointer", transition: "all 0.2s ease" }}>
+                  <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer", transition: "all 0.2s ease" }}>
                     <div style={{ fontSize: 22 }}>{h.icon}</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.5 : 1 }}>{h.label}</div>
@@ -685,7 +717,7 @@ export default function Home() {
             </div>
             <div style={{ padding: "0 20px" }}>
               <button onClick={doCheckin} disabled={doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: (doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)) ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
-                {doneCount === 0 ? "Tick at least one habit first" : isFull ? "✅ All done today!" : (checkedInToday && doneCount === savedCount) ? "✅ Saved!" : isFull ? "🔥 Full Check-In!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
+                {doneCount === 0 ? "Tick at least one habit first" : isFull ? "✅ All done today!" : (checkedInToday && doneCount === savedCount) ? "✅ Saved!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
               </button>
             </div>
           </div>
@@ -716,10 +748,7 @@ export default function Home() {
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10 }}>
               <button onClick={() => {
-                const currentIds = habits.map(h => {
-                  const preset = presetHabits.find(p => p.label === h.label);
-                  return preset ? preset.id : null;
-                }).filter(Boolean) as string[];
+                const currentIds = habits.map(h => { const preset = presetHabits.find(p => p.label === h.label); return preset ? preset.id : null; }).filter(Boolean) as string[];
                 setSelectedPresets(currentIds);
                 setShowManageHabits(true);
               }} style={{ width: "100%", padding: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>
