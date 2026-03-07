@@ -122,6 +122,18 @@ export default function Home() {
 
   useEffect(() => { if (user && currentGroup) { loadGroupStreak(); loadGroupHabits(); } }, [currentGroup]);
 
+  // Re-sync group checkin habits whenever personal habits change
+  useEffect(() => {
+    if (groupHabits.length > 0) {
+      const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
+      setGroupCheckinHabits(prev => prev.map(gh => ({
+        ...gh,
+        checked: gh.fromPersonal ? checkedPersonalLabels.includes(gh.label) : gh.checked,
+        fromPersonal: checkedPersonalLabels.includes(gh.label),
+      })));
+    }
+  }, [habits]);
+
   const ensureUserRecord = async () => {
     const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
     if (!data) await supabase.from("users").insert({ id: user.id, name: user.user_metadata?.name || "", email: user.email });
@@ -154,10 +166,8 @@ export default function Home() {
     setGroupHabits(data);
     const { data: groupCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
     const groupCheckedIds = groupCheckins ? groupCheckins.map((c: any) => c.habit_id) : [];
-    const { data: personalCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
-    const personalCheckedIds = personalCheckins ? personalCheckins.map((c: any) => c.habit_id) : [];
-    const { data: personalHabits } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null);
-    const checkedPersonalLabels = personalHabits?.filter((h: any) => personalCheckedIds.includes(h.id)).map((h: any) => h.label) || [];
+    // Use current in-memory habits state for overlap (not DB) so home tab ticks reflect immediately
+    const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
     setGroupCheckedInToday(groupCheckedIds.length > 0 || data.some((gh: any) => checkedPersonalLabels.includes(gh.label)));
     setGroupCheckinHabits(data.map((gh: any) => ({
       ...gh,
@@ -373,10 +383,7 @@ export default function Home() {
     const checkedGroupHabits = groupCheckinHabits.filter(h => h.checked && !h.fromPersonal);
     if (checkedGroupHabits.length === 0 && !groupCheckinHabits.some(h => h.fromPersonal && h.checked)) return;
     await supabase.from("checkins").delete().eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
-    const { data: personalCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
-    const personalCheckedIds = personalCheckins ? personalCheckins.map((c: any) => c.habit_id) : [];
-    const { data: personalHabits } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null);
-    const checkedPersonalLabels = personalHabits?.filter((h: any) => personalCheckedIds.includes(h.id)).map((h: any) => h.label) || [];
+    const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
     const overlapGroupHabits = groupHabits.filter(gh => checkedPersonalLabels.includes(gh.label));
     const allGroupCheckins = [...new Map([...overlapGroupHabits, ...checkedGroupHabits].map(h => [h.id, h])).values()];
     await supabase.from("checkins").insert(allGroupCheckins.map(h => ({ user_id: user.id, group_id: currentGroup.id, date: today, habit_id: h.id, habits_completed: allGroupCheckins.length })));
@@ -663,7 +670,15 @@ export default function Home() {
               </div>
               <div style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 16 }}>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Invite code</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#FF6B35", letterSpacing: "0.1em" }}>{currentGroup.invite_code}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#FF6B35", letterSpacing: "0.1em" }}>{currentGroup.invite_code}</div>
+                  <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(currentGroup.invite_code); triggerToast("Copied! ✅"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "rgba(255,255,255,0.4)", fontSize: 16, display: "flex", alignItems: "center" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
             {groupHabits.length > 0 && (
