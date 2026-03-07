@@ -102,7 +102,8 @@ export default function Home() {
   const doneCount = habits.filter((h) => h.checked).length;
   const progress = habits.length > 0 ? doneCount / habits.length : 0;
   const isFull = habits.length > 0 && doneCount === habits.length;
-  const hype = doneCount > 0 ? HYPE_MESSAGES[Math.min(doneCount - 1, HYPE_MESSAGES.length - 1)] : null;
+  const hypeIndex = habits.length > 0 ? Math.min(Math.floor((doneCount / habits.length) * HYPE_MESSAGES.length), HYPE_MESSAGES.length - 1) : 0;
+  const hype = doneCount > 0 ? HYPE_MESSAGES[hypeIndex] : null;
   const groupDoneCount = groupCheckinHabits.filter(h => h.checked).length;
   const groupIsFull = groupHabits.length > 0 && groupDoneCount === groupHabits.length;
 
