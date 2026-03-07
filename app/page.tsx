@@ -521,7 +521,7 @@ export default function Home() {
 
         {/* Habits */}
         <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>Daily Habits</div>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Daily Habits</div>
           {memberHabits.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {memberHabits.map((h: any) => (
