@@ -288,6 +288,29 @@ export default function Home() {
   };
 
   const joinGroup = async () => {
+
+  const deleteGroup = async () => {
+    if (!currentGroup) return;
+    if (!confirm("Delete this group? This cannot be undone.")) return;
+    await supabase.from("checkins").delete().eq("group_id", currentGroup.id);
+    await supabase.from("habits").delete().eq("group_id", currentGroup.id);
+    await supabase.from("group_members").delete().eq("group_id", currentGroup.id);
+    await supabase.from("groups").delete().eq("id", currentGroup.id);
+    setGroups(prev => prev.filter(g => g.id !== currentGroup.id));
+    setCurrentGroup(null); setGroupMembers([]); setGroupHabits([]);
+    setShowGroupDetail(false); setActiveTab("group");
+    triggerToast("🗑️ Group deleted");
+  };
+
+  const leaveGroup = async () => {
+    if (!currentGroup) return;
+    if (!confirm("Leave this group?")) return;
+    await supabase.from("group_members").delete().eq("group_id", currentGroup.id).eq("user_id", user.id);
+    setGroups(prev => prev.filter(g => g.id !== currentGroup.id));
+    setCurrentGroup(null); setGroupMembers([]); setGroupHabits([]);
+    setShowGroupDetail(false); setActiveTab("group");
+    triggerToast("👋 Left the group");
+  };
     if (!joinCode.trim()) return;
     const { data: group, error } = await supabase.from("groups").select().eq("invite_code", joinCode.toUpperCase()).single();
     if (error || !group) { triggerToast("❌ Invalid invite code"); return; }
@@ -467,7 +490,7 @@ export default function Home() {
           ))}
         </div>
         <button onClick={doGroupCheckin} disabled={groupCheckinHabits.filter(h => h.checked && !h.fromPersonal).length === 0 && !groupCheckinHabits.some(h => h.fromPersonal && h.checked)} style={{ ...btnPrimary, opacity: groupCheckinHabits.some(h => h.checked) ? 1 : 0.4 }}>
-          {groupIsFull ? "🔥 Full Group Check-In!" : "⚡ Save Group Check-In (" + groupDoneCount + "/" + groupHabits.length + ")"}
+          {groupIsFull ? "🔥 Full Check-in!" : "⚡ Check-in (" + groupDoneCount + "/" + groupHabits.length + ")"}
         </button>
       </div>
     </div>
@@ -654,11 +677,16 @@ export default function Home() {
             {groupHabits.length > 0 && (
               <div style={{ margin: "0 20px 16px" }}>
                 <button onClick={() => setShowGroupCheckin(true)} style={{ width: "100%", padding: 14, background: groupCheckedInToday ? "rgba(78,205,196,0.1)" : "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: groupCheckedInToday ? "1px solid rgba(78,205,196,0.3)" : "none", borderRadius: 16, color: groupCheckedInToday ? "#4ECDC4" : "white", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-                  {groupCheckedInToday ? "✅ Group checked in — update?" : "⚡ Group Check-In"}
+                  {groupCheckedInToday ? "✅ Checked in — update?" : "⚡ Check-in"}
                 </button>
               </div>
             )}
             <div style={{ padding: "0 24px", marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                {currentGroup.created_by === user.id
+                  ? <button onClick={deleteGroup} style={{ flex: 1, padding: "10px", background: "rgba(255,62,108,0.1)", border: "1px solid rgba(255,62,108,0.2)", borderRadius: 14, color: "#FF3E6C", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🗑️ Delete Group</button>
+                  : <button onClick={leaveGroup} style={{ flex: 1, padding: "10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, color: "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>👋 Leave Group</button>}
+              </div>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Leaderboard 🏆</div>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
