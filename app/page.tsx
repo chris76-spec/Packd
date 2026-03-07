@@ -476,7 +476,7 @@ export default function Home() {
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>Group check-in for today</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
           {groupCheckinHabits.map((h: any) => (
-            <div key={h.id} onClick={() => toggleGroupCheckinHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: h.fromPersonal ? "default" : "pointer", opacity: h.fromPersonal ? 0.7 : 1 }}>
+            <div key={h.id} onClick={() => toggleGroupCheckinHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: h.fromPersonal ? "default" : "pointer" }}>
               <div style={{ fontSize: 22 }}>{h.icon}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, textDecoration: h.checked ? "line-through" : "none", opacity: h.checked ? 0.6 : 1 }}>{h.label}</div>
