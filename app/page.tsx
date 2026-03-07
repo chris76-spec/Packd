@@ -511,7 +511,7 @@ export default function Home() {
               ))}
             </div>
             <div style={{ padding: "0 20px" }}>
-              <button onClick={doCheckin} disabled={doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: doneCount === 0 ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: doneCount === 0 ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: doneCount === 0 ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
+              <button onClick={doCheckin} disabled={doneCount === 0 || isFull || (checkedInToday && doneCount === savedCount)} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: (doneCount === 0 || (checkedInToday && doneCount === savedCount)) ? "not-allowed" : "pointer", transition: "all 0.3s ease" }}>
                 {doneCount === 0 ? "Tick at least one habit first" : isFull ? "🔥 Full Check-In!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
               </button>
             </div>
