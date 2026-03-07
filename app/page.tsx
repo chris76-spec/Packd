@@ -35,17 +35,14 @@ function streakEmoji(s: number) {
   if (s >= 3) return "⚡";
   return "🌱";
 }
-function calcStreak(dates: string[], fromDate?: string) {
+function calcStreak(dates: string[]) {
   if (!dates || dates.length === 0) return 0;
   const today = getToday();
-  const startFrom = fromDate ? fromDate.split("T")[0] : "1970-01-01";
-  const filtered = [...new Set(dates.filter(d => d >= startFrom))].sort().reverse();
-  if (filtered.length === 0) return 0;
+  const unique = [...new Set(dates)].sort().reverse();
   let count = 0;
   const current = new Date(today);
-  for (const date of filtered) {
-    const d = new Date(date);
-    const diff = Math.round((current.getTime() - d.getTime()) / 86400000);
+  for (const date of unique) {
+    const diff = Math.round((current.getTime() - new Date(date).getTime()) / 86400000);
     if (diff === count || (count === 0 && diff === 0)) { count++; current.setDate(current.getDate() - 1); } else break;
   }
   return count;
@@ -75,7 +72,6 @@ export default function Home() {
   const [groupStreak, setGroupStreak] = useState(0);
   const [checkedInToday, setCheckedInToday] = useState(false);
   const [checkInType, setCheckInType] = useState<"full"|"partial"|null>(null);
-  const [checkedHabits, setCheckedHabits] = useState<number[]>([]);
   const [weekDays, setWeekDays] = useState(WEEK.map((d) => ({ label: d, filled: false, today: false })));
 
   const doneCount = habits.filter((h) => h.checked).length;
@@ -93,8 +89,19 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => { if (user) { loadGroups(); loadPersonalStreak(); } }, [user]);
+  useEffect(() => { if (user) { ensureUserRecord(); loadGroups(); loadPersonalStreak(); } }, [user]);
   useEffect(() => { if (user && currentGroup) loadGroupStreak(); }, [currentGroup]);
+
+  const ensureUserRecord = async () => {
+    const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
+    if (!data) {
+      await supabase.from("users").insert({
+        id: user.id,
+        name: user.user_metadata?.name || "",
+        email: user.email,
+      });
+    }
+  };
 
   const loadPersonalStreak = async () => {
     const today = getToday();
@@ -105,7 +112,6 @@ export default function Home() {
       setCheckedInToday(true);
       setCheckInType(todayRow.habits_completed >= habits.length ? "full" : "partial");
       setHabits((prev) => prev.map((h, i) => ({ ...h, checked: i < todayRow.habits_completed })));
-      setCheckedHabits(Array.from({length: todayRow.habits_completed}, (_, i) => i + 1));
     }
     const dates = data.map((r: any) => r.date);
     setPersonalStreak(calcStreak(dates));
@@ -120,11 +126,9 @@ export default function Home() {
 
   const loadGroupStreak = async () => {
     if (!currentGroup) return;
-    const { data: memberRow } = await supabase.from("group_members").select("joined_at").eq("user_id", user.id).eq("group_id", currentGroup.id).single();
-    const joinedAt = memberRow?.joined_at || null;
     const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).eq("group_id", currentGroup.id).order("date", { ascending: false });
     const dates = data ? data.map((r: any) => r.date) : [];
-    setGroupStreak(calcStreak(dates, joinedAt));
+    setGroupStreak(calcStreak(dates));
   };
 
   const loadGroups = async () => {
@@ -140,16 +144,21 @@ export default function Home() {
   };
 
   const loadMembers = async (groupId: string) => {
-    const { data: memberData } = await supabase.from("group_members").select("user_id, joined_at").eq("group_id", groupId);
+    const { data: memberData } = await supabase.from("group_members").select("user_id").eq("group_id", groupId);
     if (!memberData) return;
+    const userIds = memberData.map((m: any) => m.user_id);
+    const { data: userData } = await supabase.from("users").select("id, name, email").in("id", userIds);
     const today = getToday();
     const members = await Promise.all(memberData.map(async (m: any) => {
       const { data: checkins } = await supabase.from("checkins").select("date, habits_completed").eq("user_id", m.user_id).order("date", { ascending: false });
       const todayRow = checkins?.find((r: any) => r.date === today);
       const dates = checkins ? checkins.map((r: any) => r.date) : [];
-      const memberStreak = calcStreak(dates, m.joined_at);
+      const memberStreak = calcStreak(dates);
       const isMe = m.user_id === user.id;
-      const displayName = isMe ? (user?.user_metadata?.name || "You") : (FAKE_NAMES[m.user_id] || "Member");
+      const userRecord = userData?.find((u: any) => u.id === m.user_id);
+      const displayName = isMe
+        ? (user?.user_metadata?.name || userRecord?.name || user?.email?.split("@")[0] || "You")
+        : (FAKE_NAMES[m.user_id] || userRecord?.name || userRecord?.email?.split("@")[0] || "User");
       return {
         user_id: m.user_id, streak: memberStreak,
         checkedInToday: !!todayRow,
@@ -165,9 +174,13 @@ export default function Home() {
   const handleAuth = async () => {
     setLoading(true);
     if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
-      if (error) triggerToast("❌ " + error.message);
-      else triggerToast("✅ Check your email to confirm!");
+      const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
+      if (error) { triggerToast("❌ " + error.message); setLoading(false); return; }
+      if (data.user) {
+        await supabase.from("users").upsert({ id: data.user.id, name, email });
+      }
+      triggerToast("✅ Account created! Please sign in.");
+      setIsSignUp(false);
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) triggerToast("❌ " + error.message);
