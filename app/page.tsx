@@ -58,10 +58,13 @@ export default function Home() {
   const [joinCode, setJoinCode] = useState("");
   const [streak, setStreak] = useState(0);
   const [checkedInToday, setCheckedInToday] = useState(false);
+  const [checkInType, setCheckInType] = useState<"full"|"partial"|null>(null);
   const [weekDays, setWeekDays] = useState(WEEK.map((d) => ({ label: d, filled: false, today: false })));
 
   const doneCount = habits.filter((h) => h.checked).length;
   const progress = doneCount / habits.length;
+  const isPartial = doneCount > 0 && doneCount < habits.length;
+  const isFull = doneCount === habits.length;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -78,15 +81,19 @@ export default function Home() {
 
   const loadStreak = async () => {
     const today = getToday();
-    const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).order("date", { ascending: false });
+    const { data } = await supabase.from("checkins").select("date, habits_completed").eq("user_id", user.id).order("date", { ascending: false });
     if (!data || data.length === 0) { setStreak(0); return; }
-    const checkedToday = data[0].date === today;
-    setCheckedInToday(checkedToday);
-    if (checkedToday) setHabits((prev) => prev.map((h) => ({ ...h, checked: true })));
+    const todayRow = data.find((r: any) => r.date === today);
+    if (todayRow) {
+      setCheckedInToday(true);
+      setCheckInType(todayRow.habits_completed < habits.length ? "partial" : "full");
+      setHabits((prev) => prev.map((h, i) => ({ ...h, checked: i < todayRow.habits_completed })));
+    }
     let count = 0;
     const current = new Date(today);
-    for (const row of data) {
-      const d = new Date(row.date);
+    const uniqueDates = [...new Set(data.map((r: any) => r.date))];
+    for (const date of uniqueDates) {
+      const d = new Date(date);
       const diff = Math.round((current.getTime() - d.getTime()) / 86400000);
       if (diff === count || (count === 0 && diff === 0)) { count++; current.setDate(current.getDate() - 1); } else break;
     }
@@ -95,7 +102,7 @@ export default function Home() {
     for (let i = 6; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split("T")[0];
-      const filled = data.some((r: any) => r.date === dateStr);
+      const filled = uniqueDates.includes(dateStr);
       days.push({ label: WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1], filled, today: i === 0 });
     }
     setWeekDays(days);
@@ -118,20 +125,23 @@ export default function Home() {
     if (!memberData) return;
     const today = getToday();
     const members = await Promise.all(memberData.map(async (m: any) => {
-      const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", m.user_id).order("date", { ascending: false });
-      const checkedToday = checkins && checkins.length > 0 && checkins[0].date === today;
+      const { data: checkins } = await supabase.from("checkins").select("date, habits_completed").eq("user_id", m.user_id).order("date", { ascending: false });
+      const todayRow = checkins?.find((r: any) => r.date === today);
+      const checkedToday = !!todayRow;
+      const isPartialToday = todayRow && todayRow.habits_completed < 5;
       let memberStreak = 0;
       if (checkins && checkins.length > 0) {
+        const uniqueDates = [...new Set(checkins.map((r: any) => r.date))] as string[];
         const current = new Date(today);
-        for (const row of checkins) {
-          const d = new Date(row.date);
+        for (const date of uniqueDates) {
+          const d = new Date(date);
           const diff = Math.round((current.getTime() - d.getTime()) / 86400000);
           if (diff === memberStreak || (memberStreak === 0 && diff === 0)) { memberStreak++; current.setDate(current.getDate() - 1); } else break;
         }
       }
       const isMe = m.user_id === user.id;
       const displayName = isMe ? (user?.user_metadata?.name || "You") : (FAKE_NAMES[m.user_id] || "Member");
-      return { user_id: m.user_id, streak: memberStreak, checkedInToday: checkedToday, isMe, displayName };
+      return { user_id: m.user_id, streak: memberStreak, checkedInToday: checkedToday, isPartialToday, isMe, displayName };
     }));
     setGroupMembers(members);
   };
@@ -182,14 +192,21 @@ export default function Home() {
   };
 
   const doCheckin = async () => {
-    if (checkedInToday) return;
-    const { error } = await supabase.from("checkins").insert({ user_id: user.id, group_id: currentGroup?.id || null, date: getToday() });
+    if (checkedInToday || doneCount === 0) return;
+    const type = isFull ? "full" : "partial";
+    const { error } = await supabase.from("checkins").insert({
+      user_id: user.id,
+      group_id: currentGroup?.id || null,
+      date: getToday(),
+      habits_completed: doneCount,
+    });
     if (error) { triggerToast("❌ Error saving check-in"); return; }
     setCheckedInToday(true);
-    setHabits((prev) => prev.map((h) => ({ ...h, checked: true })));
+    setCheckInType(type);
     await loadStreak();
     if (currentGroup) loadMembers(currentGroup.id);
-    triggerToast("🔥 Day checked in! Streak extended!");
+    if (type === "full") triggerToast("🔥 Full check-in! Streak extended!");
+    else triggerToast("⚡ Partial check-in! Streak maintained!");
   };
 
   const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "white", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" };
@@ -232,6 +249,11 @@ export default function Home() {
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.8, fontWeight: 600 }}>Current Streak</div>
               <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1 }}>{streak}</div>
               <div style={{ fontSize: 13, opacity: 0.75 }}>days in a row {streakEmoji(streak)}</div>
+              {checkInType && (
+                <div style={{ marginTop: 8, background: "rgba(255,255,255,0.15)", borderRadius: 10, padding: "4px 12px", display: "inline-block", fontSize: 11, fontWeight: 600 }}>
+                  {checkInType === "full" ? "🔥 Full check-in today!" : "⚡ Partial check-in today"}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
                 {weekDays.map((d, i) => (
                   <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -350,7 +372,9 @@ export default function Home() {
                   <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.displayName[0]}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>{m.displayName}{m.isMe ? " (you)" : ""}</div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{m.checkedInToday ? "✅ Checked in" : "⏳ Not yet"}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+                      {m.checkedInToday ? (m.isPartialToday ? "⚡ Partial check-in" : "✅ Full check-in") : "⏳ Not yet"}
+                    </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 18, fontWeight: 800, color: "#FF6B35" }}>{m.streak} <span style={{ fontSize: 14 }}>{streakEmoji(m.streak)}</span></div>
@@ -365,18 +389,35 @@ export default function Home() {
         {activeTab === "checkin" && (
           <div>
             <div style={{ margin: "8px 20px 20px", background: "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center" }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>{checkedInToday ? "🎉" : "⚡"}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{checkedInToday ? "You are done!" : "Daily Check-In"}</div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{checkedInToday ? "Streak is at " + streak + " days " + streakEmoji(streak) : "Complete habits to keep your " + streak + "-day streak alive."}</div>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>
+                {checkedInToday ? (checkInType === "full" ? "🎉" : "⚡") : "⚡"}
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>
+                {checkedInToday ? (checkInType === "full" ? "Full check-in!" : "Partial check-in!") : "Daily Check-In"}
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                {checkedInToday
+                  ? (checkInType === "full"
+                    ? "You crushed it today! Streak: " + streak + " days " + streakEmoji(streak)
+                    : "You showed up! Partial counts. Streak: " + streak + " days " + streakEmoji(streak))
+                  : "Tick what you've done — even 1 habit keeps your streak alive!"}
+              </div>
             </div>
             <div style={{ display: "flex", justifyContent: "center", margin: "0 0 20px" }}>
               <svg width="120" height="120" viewBox="0 0 120 120">
                 <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
-                <circle cx="60" cy="60" r="52" fill="none" stroke={checkedInToday ? "#4ECDC4" : "#FF6B35"} strokeWidth="8" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 52)} strokeDashoffset={String(2 * Math.PI * 52 * (1 - (checkedInToday ? 1 : progress)))} transform="rotate(-90 60 60)" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
-                <text x="60" y="55" textAnchor="middle" fill="white" fontWeight="800" fontSize="22">{checkedInToday ? "✓" : doneCount + "/" + habits.length}</text>
-                <text x="60" y="72" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="11">{checkedInToday ? "All done!" : "habits"}</text>
+                <circle cx="60" cy="60" r="52" fill="none" stroke={checkedInToday ? (checkInType === "full" ? "#4ECDC4" : "#FFE66D") : "#FF6B35"} strokeWidth="8" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 52)} strokeDashoffset={String(2 * Math.PI * 52 * (1 - progress))} transform="rotate(-90 60 60)" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+                <text x="60" y="55" textAnchor="middle" fill="white" fontWeight="800" fontSize="22">{doneCount + "/" + habits.length}</text>
+                <text x="60" y="72" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="11">habits</text>
               </svg>
             </div>
+            {!checkedInToday && (
+              <div style={{ padding: "0 20px", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 12 }}>
+                  Tick what you've completed today
+                </div>
+              </div>
+            )}
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
               {habits.map((h) => (
                 <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkedInToday ? "default" : "pointer" }}>
@@ -389,9 +430,15 @@ export default function Home() {
               ))}
             </div>
             <div style={{ padding: "0 20px" }}>
-              <button onClick={doCheckin} style={{ width: "100%", padding: 18, borderRadius: 20, border: checkedInToday ? "1px solid rgba(78,205,196,0.2)" : "none", background: checkedInToday ? "rgba(78,205,196,0.1)" : "linear-gradient(135deg, #FF6B35, #FF3E6C)", color: checkedInToday ? "#4ECDC4" : "white", fontSize: 17, fontWeight: 700, cursor: checkedInToday ? "default" : "pointer" }}>
-                {checkedInToday ? "✅ Checked In Today!" : "Check In" + (doneCount > 0 ? " (" + doneCount + "/" + habits.length + ")" : "")}
-              </button>
+              {!checkedInToday ? (
+                <button onClick={doCheckin} disabled={doneCount === 0} style={{ width: "100%", padding: 18, borderRadius: 20, border: "none", background: doneCount === 0 ? "rgba(255,255,255,0.06)" : isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #FFE66D, #FF6B35)", color: doneCount === 0 ? "rgba(255,255,255,0.3)" : "white", fontSize: 17, fontWeight: 700, cursor: doneCount === 0 ? "not-allowed" : "pointer" }}>
+                  {doneCount === 0 ? "Tick at least one habit first" : isFull ? "🔥 Full Check-In!" : "⚡ Partial Check-In (" + doneCount + "/" + habits.length + ")"}
+                </button>
+              ) : (
+                <div style={{ textAlign: "center", padding: 18, borderRadius: 20, background: checkInType === "full" ? "rgba(78,205,196,0.1)" : "rgba(255,230,109,0.1)", border: "1px solid " + (checkInType === "full" ? "rgba(78,205,196,0.2)" : "rgba(255,230,109,0.2)"), color: checkInType === "full" ? "#4ECDC4" : "#FFE66D", fontSize: 15, fontWeight: 700 }}>
+                  {checkInType === "full" ? "✅ Full check-in done!" : "⚡ Partial check-in done!"}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -408,7 +455,7 @@ export default function Home() {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, padding: "0 20px", marginBottom: 24 }}>
-              {[{ v: streak + " " + streakEmoji(streak), l: "Day Streak" }, { v: groups.length, l: "Groups" }, { v: checkedInToday ? "✓" : "—", l: "Today" }].map((s, i) => (
+              {[{ v: streak + " " + streakEmoji(streak), l: "Day Streak" }, { v: groups.length, l: "Groups" }, { v: checkedInToday ? (checkInType === "full" ? "🔥" : "⚡") : "—", l: "Today" }].map((s, i) => (
                 <div key={i} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "16px 12px", textAlign: "center" }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: "#FF6B35", lineHeight: 1, marginBottom: 4 }}>{s.v}</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.l}</div>
