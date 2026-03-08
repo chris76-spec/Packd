@@ -516,7 +516,7 @@ export default function Home() {
       await supabase.from("checkins").insert(overlappingHabits.map(h => ({ user_id: user.id, group_id: currentGroup.id, date: today, habit_id: groupHabitMap.get(h.label), habits_completed: overlappingHabits.length })));
       setGroupCheckedInToday(true);
     }
-    setCheckedInToday(true); setCheckInType(type); setSavedCount(doneCount);
+    setCheckedInToday(true); setCheckInType(type); setSavedCount(doneCount); await loadUserHabits();
     setIsFirstVisit(false);
     await loadPersonalStreak(); await loadGroupStreak();
     if (currentGroup) { loadMembers(currentGroup.id); loadGroupHabits(); }
