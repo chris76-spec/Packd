@@ -62,7 +62,16 @@ function getTimeLabel() {
 }
 
 function generateCode() { return Math.random().toString(36).substring(2, 8).toUpperCase(); }
-function getToday() { return new Date().toISOString().split("T")[0]; }
+
+// TIMEZONE FIX: Use local date instead of UTC to avoid midnight rollover issues
+function getToday() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function streakEmoji(s: number) {
   if (s >= 21) return "👑";
   if (s >= 14) return "🌟";
@@ -70,14 +79,17 @@ function streakEmoji(s: number) {
   if (s >= 3) return "⚡";
   return "🌱";
 }
+
+// TIMEZONE FIX: calcStreak also uses local date for "today" comparison
 function calcStreak(dates: string[]) {
   if (!dates || dates.length === 0) return 0;
   const today = getToday();
   const unique = [...new Set(dates)].sort().reverse();
   let count = 0;
-  const current = new Date(today);
+  const current = new Date(today + "T12:00:00"); // noon local to avoid DST edge cases
   for (const date of unique) {
-    const diff = Math.round((current.getTime() - new Date(date).getTime()) / 86400000);
+    const dateNoon = new Date(date + "T12:00:00");
+    const diff = Math.round((current.getTime() - dateNoon.getTime()) / 86400000);
     if (diff === count || (count === 0 && diff === 0)) { count++; current.setDate(current.getDate() - 1); } else break;
   }
   return count;
@@ -131,6 +143,18 @@ export default function Home() {
   const [showMemberProfile, setShowMemberProfile] = useState(false);
   const [greeting] = useState(getGreeting());
   const [isFirstVisit, setIsFirstVisit] = useState(false);
+  // NEW: Error handling
+  const [hasError, setHasError] = useState(false);
+  // NEW: Forgot password
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSent, setForgotSent] = useState(false);
+  // NEW: Settings & Notifications
+  const [showSettings, setShowSettings] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  // NEW: Edit profile in settings
+  const [editName, setEditName] = useState("");
+  const [editNameSaving, setEditNameSaving] = useState(false);
 
   const doneCount = habits.filter((h) => h.checked).length;
   const progress = habits.length > 0 ? doneCount / habits.length : 0;
@@ -169,117 +193,158 @@ export default function Home() {
   }, [habits]);
 
   const checkIfNewUser = async () => {
-    const { data } = await supabase.from("habits").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
-    if (!data || data.length === 0) {
-      setIsFirstVisit(true);
-      setScreen("welcome");
-    } else {
-      setIsFirstVisit(false);
-      loadUserHabits();
-      setScreen("app");
-    }
+    try {
+      const { data } = await supabase.from("habits").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
+      if (!data || data.length === 0) {
+        setIsFirstVisit(true);
+        setScreen("welcome");
+      } else {
+        setIsFirstVisit(false);
+        loadUserHabits();
+        setScreen("app");
+      }
+    } catch (e) { setHasError(true); }
   };
 
   const ensureUserRecord = async () => {
-    const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
-    if (!data) await supabase.from("users").insert({ id: user.id, name: user.user_metadata?.name || "", email: user.email });
+    try {
+      const { data } = await supabase.from("users").select("id").eq("id", user.id).single();
+      if (!data) await supabase.from("users").insert({ id: user.id, name: user.user_metadata?.name || "", email: user.email });
+    } catch (e) { /* non-critical */ }
   };
 
   const loadPresetHabits = async () => {
-    const { data } = await supabase.from("habits").select("*").is("user_id", null).is("group_id", null).order("position");
-    if (data) setPresetHabits(data);
+    try {
+      const { data } = await supabase.from("habits").select("*").is("user_id", null).is("group_id", null).order("position");
+      if (data) setPresetHabits(data);
+    } catch (e) { setHasError(true); }
   };
 
   const loadUserHabits = async () => {
-    const today = getToday();
-    const { data } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null).order("position");
-    if (!data || data.length === 0) return;
-    const { data: checkins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
-    const checkedIds = checkins ? checkins.map((c: any) => c.habit_id) : [];
-    setHabits(data.map((h: any) => ({ ...h, checked: checkedIds.includes(h.id) })));
-    if (checkedIds.length > 0) {
-      setCheckedInToday(true);
-      setCheckInType(checkedIds.length >= data.length ? "full" : "partial");
-      setSavedCount(checkedIds.length);
-    }
-    // First visit detection — no check-ins ever
-    const { data: allCheckins } = await supabase.from("checkins").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
-    setIsFirstVisit(!allCheckins || allCheckins.length === 0);
+    try {
+      const today = getToday();
+      const { data } = await supabase.from("habits").select("*").eq("user_id", user.id).is("group_id", null).order("position");
+      if (!data || data.length === 0) return;
+      const { data: checkins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).is("group_id", null);
+      const checkedIds = checkins ? checkins.map((c: any) => c.habit_id) : [];
+      setHabits(data.map((h: any) => ({ ...h, checked: checkedIds.includes(h.id) })));
+      if (checkedIds.length > 0) {
+        setCheckedInToday(true);
+        setCheckInType(checkedIds.length >= data.length ? "full" : "partial");
+        setSavedCount(checkedIds.length);
+      }
+      const { data: allCheckins } = await supabase.from("checkins").select("id").eq("user_id", user.id).is("group_id", null).limit(1);
+      setIsFirstVisit(!allCheckins || allCheckins.length === 0);
+    } catch (e) { setHasError(true); }
   };
 
   const loadGroupHabits = async () => {
     if (!currentGroup) return;
-    const today = getToday();
-    const { data } = await supabase.from("habits").select("*").eq("group_id", currentGroup.id).order("position");
-    if (!data) return;
-    setGroupHabits(data);
-    const { data: groupCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
-    const groupCheckedIds = groupCheckins ? groupCheckins.map((c: any) => c.habit_id) : [];
-    const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
-    setGroupCheckedInToday(groupCheckedIds.length > 0 || data.some((gh: any) => checkedPersonalLabels.includes(gh.label)));
-    setGroupCheckinHabits(data.map((gh: any) => ({
-      ...gh,
-      checked: groupCheckedIds.includes(gh.id) || checkedPersonalLabels.includes(gh.label),
-      fromPersonal: checkedPersonalLabels.includes(gh.label),
-    })));
+    try {
+      const today = getToday();
+      const { data } = await supabase.from("habits").select("*").eq("group_id", currentGroup.id).order("position");
+      if (!data) return;
+      setGroupHabits(data);
+      const { data: groupCheckins } = await supabase.from("checkins").select("habit_id").eq("user_id", user.id).eq("date", today).eq("group_id", currentGroup.id);
+      const groupCheckedIds = groupCheckins ? groupCheckins.map((c: any) => c.habit_id) : [];
+      const checkedPersonalLabels = habits.filter(h => h.checked).map(h => h.label);
+      setGroupCheckedInToday(groupCheckedIds.length > 0 || data.some((gh: any) => checkedPersonalLabels.includes(gh.label)));
+      setGroupCheckinHabits(data.map((gh: any) => ({
+        ...gh,
+        checked: groupCheckedIds.includes(gh.id) || checkedPersonalLabels.includes(gh.label),
+        fromPersonal: checkedPersonalLabels.includes(gh.label),
+      })));
+    } catch (e) { /* non-critical */ }
   };
 
   const loadPersonalStreak = async () => {
-    const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).is("group_id", null).order("date", { ascending: false });
-    if (!data || data.length === 0) { setPersonalStreak(0); return; }
-    const dates = [...new Set(data.map((r: any) => r.date))] as string[];
-    setPersonalStreak(calcStreak(dates));
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split("T")[0];
-      days.push({ label: WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1], filled: dates.includes(dateStr), today: i === 0 });
-    }
-    setWeekDays(days);
+    try {
+      const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).is("group_id", null).order("date", { ascending: false });
+      if (!data || data.length === 0) { setPersonalStreak(0); return; }
+      const dates = [...new Set(data.map((r: any) => r.date))] as string[];
+      setPersonalStreak(calcStreak(dates));
+      const days = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, "0");
+        const dy = String(d.getDate()).padStart(2, "0");
+        const dateStr = `${y}-${mo}-${dy}`;
+        days.push({ label: WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1], filled: dates.includes(dateStr), today: i === 0 });
+      }
+      setWeekDays(days);
+    } catch (e) { /* non-critical */ }
   };
 
   const loadGroupStreak = async () => {
     if (!currentGroup) return;
-    const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).eq("group_id", currentGroup.id).order("date", { ascending: false });
-    const dates = data ? [...new Set(data.map((r: any) => r.date))] as string[] : [];
-    setGroupStreak(calcStreak(dates));
+    try {
+      const { data } = await supabase.from("checkins").select("date").eq("user_id", user.id).eq("group_id", currentGroup.id).order("date", { ascending: false });
+      const dates = data ? [...new Set(data.map((r: any) => r.date))] as string[] : [];
+      setGroupStreak(calcStreak(dates));
+    } catch (e) { /* non-critical */ }
   };
 
   const loadGroups = async () => {
-    const { data, error } = await supabase.from("group_members").select("group_id").eq("user_id", user.id);
-    if (error || !data || data.length === 0) return;
-    const groupIds = data.map((d: any) => d.group_id);
-    const { data: groupData } = await supabase.from("groups").select("*").in("id", groupIds);
-    if (groupData && groupData.length > 0) { setGroups(groupData); setCurrentGroup(groupData[0]); loadMembers(groupData[0].id); }
+    try {
+      const { data, error } = await supabase.from("group_members").select("group_id").eq("user_id", user.id);
+      if (error || !data || data.length === 0) return;
+      const groupIds = data.map((d: any) => d.group_id);
+      const { data: groupData } = await supabase.from("groups").select("*").in("id", groupIds);
+      if (groupData && groupData.length > 0) { setGroups(groupData); setCurrentGroup(groupData[0]); loadMembers(groupData[0].id); }
+    } catch (e) { /* non-critical */ }
   };
 
   const loadMembers = async (groupId: string) => {
-    const { data: memberData } = await supabase.from("group_members").select("user_id").eq("group_id", groupId);
-    if (!memberData) return;
-    const userIds = memberData.map((m: any) => m.user_id);
-    const { data: userData } = await supabase.from("users").select("id, name, email").in("id", userIds);
-    const today = getToday();
-    const members = await Promise.all(memberData.map(async (m: any) => {
-      const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", m.user_id).eq("group_id", groupId).order("date", { ascending: false });
-      const dates = checkins ? [...new Set(checkins.map((r: any) => r.date))] as string[] : [];
-      const isMe = m.user_id === user.id;
-      const userRecord = userData?.find((u: any) => u.id === m.user_id);
-      const displayName = isMe ? (user?.user_metadata?.name || userRecord?.name || user?.email?.split("@")[0] || "You") : (FAKE_NAMES[m.user_id] || userRecord?.name || userRecord?.email?.split("@")[0] || "User");
-      return { user_id: m.user_id, streak: calcStreak(dates), checkedInToday: dates.includes(today), isMe, displayName };
-    }));
-    setGroupMembers(members);
+    try {
+      const { data: memberData } = await supabase.from("group_members").select("user_id").eq("group_id", groupId);
+      if (!memberData) return;
+      const userIds = memberData.map((m: any) => m.user_id);
+      const { data: userData } = await supabase.from("users").select("id, name, email").in("id", userIds);
+      const today = getToday();
+      const members = await Promise.all(memberData.map(async (m: any) => {
+        const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", m.user_id).eq("group_id", groupId).order("date", { ascending: false });
+        const dates = checkins ? [...new Set(checkins.map((r: any) => r.date))] as string[] : [];
+        const isMe = m.user_id === user.id;
+        const userRecord = userData?.find((u: any) => u.id === m.user_id);
+        const displayName = isMe ? (user?.user_metadata?.name || userRecord?.name || user?.email?.split("@")[0] || "You") : (FAKE_NAMES[m.user_id] || userRecord?.name || userRecord?.email?.split("@")[0] || "User");
+        return { user_id: m.user_id, streak: calcStreak(dates), checkedInToday: dates.includes(today), isMe, displayName };
+      }));
+      setGroupMembers(members);
+    } catch (e) { /* non-critical */ }
   };
 
   const loadMemberProfile = async (member: any) => {
     setSelectedMember(member);
     setShowMemberProfile(true);
-    // Load their personal streak
-    const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", member.user_id).is("group_id", null).order("date", { ascending: false });
-    const dates = checkins ? [...new Set(checkins.map((r: any) => r.date))] as string[] : [];
-    setMemberStreak(calcStreak(dates));
-    // Load their habits
-    const { data: habits } = await supabase.from("habits").select("*").eq("user_id", member.user_id).is("group_id", null).order("position");
-    setMemberHabits(habits || []);
+    try {
+      const { data: checkins } = await supabase.from("checkins").select("date").eq("user_id", member.user_id).is("group_id", null).order("date", { ascending: false });
+      const dates = checkins ? [...new Set(checkins.map((r: any) => r.date))] as string[] : [];
+      setMemberStreak(calcStreak(dates));
+      const { data: mHabits } = await supabase.from("habits").select("*").eq("user_id", member.user_id).is("group_id", null).order("position");
+      setMemberHabits(mHabits || []);
+    } catch (e) { /* non-critical */ }
+  };
+
+  const generateNotifications = () => {
+    const notifs: any[] = [];
+    const notCheckedIn = groupMembers.filter(m => !m.isMe && !m.checkedInToday);
+    notCheckedIn.forEach(m => {
+      notifs.push({ id: m.user_id, icon: "👀", text: `${m.displayName} hasn't checked in today`, time: "Today" });
+    });
+    if (groupStreak > 0 && groupStreak % 7 === 0) {
+      notifs.push({ id: "streak7", icon: "🔥", text: `Your pack hit a ${groupStreak}-day group streak!`, time: "Today" });
+    }
+    if (personalStreak >= 7 && personalStreak % 7 === 0) {
+      notifs.push({ id: "personal7", icon: "👑", text: `You're on a ${personalStreak}-day personal streak!`, time: "Today" });
+    }
+    if (isFull) {
+      notifs.push({ id: "full", icon: "🎉", text: "Full check-in today! Streak secured.", time: "Today" });
+    }
+    if (notifs.length === 0) {
+      notifs.push({ id: "empty", icon: "🐺", text: "All quiet in the pack. Keep grinding!", time: "Now" });
+    }
+    setNotifications(notifs);
   };
 
   const triggerToast = (msg: string, big = false) => {
@@ -295,20 +360,47 @@ export default function Home() {
 
   const handleAuth = async () => {
     setLoading(true);
-    if (isSignUp) {
-      const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
-      if (error) { triggerToast("❌ " + error.message); setLoading(false); return; }
-      if (data.user) await supabase.from("users").upsert({ id: data.user.id, name, email });
-      triggerToast("✅ Account created! Please sign in.");
-      setIsSignUp(false);
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) triggerToast("❌ " + error.message);
-    }
+    try {
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
+        if (error) { triggerToast("❌ " + error.message); setLoading(false); return; }
+        if (data.user) await supabase.from("users").upsert({ id: data.user.id, name, email });
+        triggerToast("✅ Account created! Please sign in.");
+        setIsSignUp(false);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) triggerToast("❌ " + error.message);
+      }
+    } catch (e) { triggerToast("❌ Something went wrong. Please try again."); }
+    setLoading(false);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!forgotEmail.trim()) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
+        redirectTo: "https://packd-two.vercel.app",
+      });
+      if (error) { triggerToast("❌ " + error.message); }
+      else { setForgotSent(true); }
+    } catch (e) { triggerToast("❌ Something went wrong."); }
     setLoading(false);
   };
 
   const handleSignOut = async () => { await supabase.auth.signOut(); setScreen("login"); };
+
+  const handleEditName = async () => {
+    if (!editName.trim()) return;
+    setEditNameSaving(true);
+    try {
+      await supabase.auth.updateUser({ data: { name: editName.trim() } });
+      await supabase.from("users").update({ name: editName.trim() }).eq("id", user.id);
+      triggerToast("✅ Name updated!");
+      setEditName("");
+    } catch (e) { triggerToast("❌ Couldn't update name."); }
+    setEditNameSaving(false);
+  };
 
   const savePersonalHabits = async (ids: string[]) => {
     const selected = presetHabits.filter(h => ids.includes(h.id));
@@ -324,18 +416,12 @@ export default function Home() {
   };
 
   const togglePreset = (id: string) => {
-    if (!selectedPresets.includes(id) && selectedPresets.length >= 5) {
-      triggerToast("Max 5 habits! Swap one out first 😊");
-      return;
-    }
+    if (!selectedPresets.includes(id) && selectedPresets.length >= 5) { triggerToast("Max 5 habits! Swap one out first 😊"); return; }
     setSelectedPresets(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   };
 
   const toggleGroupHabitPreset = (id: string) => {
-    if (!selectedGroupHabits.includes(id) && selectedGroupHabits.length >= 5) {
-      triggerToast("Max 5 group habits! Swap one out first 😊");
-      return;
-    }
+    if (!selectedGroupHabits.includes(id) && selectedGroupHabits.length >= 5) { triggerToast("Max 5 group habits! Swap one out first 😊"); return; }
     setSelectedGroupHabits(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   };
 
@@ -460,95 +546,53 @@ export default function Home() {
   const btnPrimary: React.CSSProperties = { width: "100%", padding: "14px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 };
   const btnSecondary: React.CSSProperties = { width: "100%", padding: "12px", background: "none", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" };
 
-  const HabitPicker = ({ selected, onToggle, onSave, onBack, title, subtitle, saveLabel }: any) => (
-    <div style={{ maxWidth: 430, margin: "0 auto", padding: "24px" }}>
-      <button onClick={onBack} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 16, padding: 0 }}>← Back</button>
-      <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>{title}</div>
-      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>{subtitle}</div>
-      <div style={{ fontSize: 13, color: "#FF6B35", fontWeight: 600, marginBottom: 20 }}>{selected.length}/5 selected</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-        {presetHabits.map((h: any) => {
-          const sel = selected.includes(h.id);
-          return (
-            <div key={h.id} onClick={() => onToggle(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: sel ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (sel ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 16, padding: "12px 16px", cursor: "pointer", transition: "all 0.2s" }}>
-              <div style={{ fontSize: 22 }}>{h.icon}</div>
-              <div style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{h.label}</div>
-              <div style={{ width: 22, height: 22, borderRadius: "50%", background: sel ? "#4ECDC4" : "transparent", border: "2px solid " + (sel ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {sel && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {showAddCustom ? (
-        <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Add custom habit</div>
-          <input value={customHabitIcon} onChange={e => setCustomHabitIcon(e.target.value)} placeholder="Icon (emoji)" style={{ ...inputStyle, marginBottom: 8 }} />
-          <input value={customHabitLabel} onChange={e => setCustomHabitLabel(e.target.value)} placeholder="Habit name" style={inputStyle} />
-          <button onClick={() => setShowAddCustom(false)} style={btnSecondary}>Done</button>
+  // ── ERROR PAGE ──────────────────────────────────────────────────────────────
+  if (hasError) return (
+    <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", alignItems: "center", justifyContent: "center", padding: "32px" }}>
+      <div style={{ textAlign: "center", maxWidth: 360 }}>
+        <div style={{ fontSize: 80, marginBottom: 16 }}>🏋️</div>
+        <div style={{ fontSize: 28, fontWeight: 900, color: "#FF6B35", marginBottom: 8 }}>We're lifting some heavy weights</div>
+        <div style={{ fontSize: 15, color: "rgba(255,255,255,0.5)", lineHeight: 1.7, marginBottom: 32 }}>
+          The servers are mid-rep right now.<br />Give us a second to finish the set.
         </div>
-      ) : selected.length < 5 && <button onClick={() => setShowAddCustom(true)} style={{ ...btnSecondary, marginBottom: 16 }}>+ Add custom habit</button>}
-      <button onClick={() => onSave(selected)} disabled={selected.length === 0 && !customHabitLabel.trim()} style={{ ...btnPrimary, opacity: selected.length === 0 && !customHabitLabel.trim() ? 0.4 : 1 }}>{saveLabel}</button>
-    </div>
-  );
-
-  // MEMBER PROFILE MODAL
-  const MemberProfile = () => (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowMemberProfile(false)}>
-      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 430, background: "#161620", borderRadius: "28px 28px 0 0", padding: "28px 24px 48px", maxHeight: "80vh", overflowY: "auto" }}>
-        <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, margin: "0 auto 24px" }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-          <div style={{ width: 64, height: 64, borderRadius: 20, background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 26, color: "white" }}>
-            {selectedMember?.displayName?.[0]?.toUpperCase()}
-          </div>
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>{selectedMember?.displayName}{selectedMember?.isMe ? " (you)" : ""}</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{selectedMember?.checkedInToday ? "✅ Checked in today" : "⏳ Not checked in yet"}</div>
-          </div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)", marginBottom: 32 }}>
+          🔁 Still broken? Try refreshing. We're probably just catching our breath.
         </div>
-
-        {/* Streaks */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
-          <div style={{ background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16, textAlign: "center" }}>
-            <div style={{ fontSize: 28, fontWeight: 800, color: "#FF6B35" }}>{memberStreak} {streakEmoji(memberStreak)}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Personal Streak</div>
-          </div>
-          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 16, textAlign: "center" }}>
-            <div style={{ fontSize: 28, fontWeight: 800, color: "#4ECDC4" }}>{selectedMember?.streak} {streakEmoji(selectedMember?.streak || 0)}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Group Streak</div>
-          </div>
-        </div>
-
-        {/* Habits */}
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Daily Habits</div>
-          {memberHabits.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {memberHabits.map((h: any) => (
-                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, padding: "10px 14px" }}>
-                  <span style={{ fontSize: 20 }}>{h.icon}</span>
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>{h.label}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: "16px 0" }}>No habits set yet</div>
-          )}
-        </div>
-
-        {/* Awards placeholder */}
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Awards</div>
-          <div style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.1)", borderRadius: 16, padding: "20px", textAlign: "center" }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>🏆</div>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>Awards coming soon!</div>
-          </div>
-        </div>
+        <button onClick={() => { setHasError(false); window.location.reload(); }} style={{ ...btnPrimary, marginBottom: 0 }}>
+          Try Again 💪
+        </button>
       </div>
     </div>
   );
 
-  // WELCOME SCREEN
+  // ── FORGOT PASSWORD ─────────────────────────────────────────────────────────
+  if (screen === "forgotPassword") return (
+    <div style={{ minHeight: "100vh", background: "#0A0A0F", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ width: 360, padding: "40px 32px", background: "#0F0F18", borderRadius: 28, border: "1px solid rgba(255,255,255,0.08)" }}>
+        <button onClick={() => { setScreen("login"); setForgotSent(false); setForgotEmail(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 24, padding: 0 }}>← Back to Sign In</button>
+        {forgotSent ? (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>📬</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Check your inbox</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", lineHeight: 1.7, marginBottom: 24 }}>
+              We sent a reset link to<br /><span style={{ color: "#FF6B35", fontWeight: 600 }}>{forgotEmail}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)" }}>Didn't get it? Check your spam folder.</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Forgot password?</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 24 }}>No stress. We'll send you a reset link.</div>
+            {showToast && <div style={{ background: "rgba(78,205,196,0.15)", border: "1px solid rgba(78,205,196,0.3)", color: "#4ECDC4", padding: "10px 16px", borderRadius: 12, marginBottom: 16, fontSize: 13, textAlign: "center" }}>{toast}</div>}
+            <input value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} placeholder="Your email" type="email" style={{ ...inputStyle, marginBottom: 20 }} />
+            <button onClick={handleForgotPassword} disabled={loading} style={btnPrimary}>{loading ? "Sending..." : "Send Reset Link 📧"}</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── WELCOME SCREEN ──────────────────────────────────────────────────────────
   if (screen === "welcome") return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", top: "-20%", left: "-20%", width: "60%", height: "60%", background: "radial-gradient(circle, rgba(255,107,53,0.15) 0%, transparent 70%)", pointerEvents: "none" }} />
@@ -579,6 +623,7 @@ export default function Home() {
     </div>
   );
 
+  // ── ONBOARDING ──────────────────────────────────────────────────────────────
   if (screen === "onboarding") return (
     <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
       <div style={{ textAlign: "center", padding: "40px 24px 20px" }}>
@@ -591,6 +636,7 @@ export default function Home() {
     </div>
   );
 
+  // ── LOGIN ───────────────────────────────────────────────────────────────────
   if (screen === "login") return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ width: 360, padding: "40px 32px", background: "#0F0F18", borderRadius: 28, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -602,13 +648,19 @@ export default function Home() {
         {showToast && <div style={{ background: "rgba(78,205,196,0.15)", border: "1px solid rgba(78,205,196,0.3)", color: "#4ECDC4", padding: "10px 16px", borderRadius: 12, marginBottom: 16, fontSize: 13, textAlign: "center" }}>{toast}</div>}
         {isSignUp && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" style={inputStyle} />}
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" style={inputStyle} />
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" style={{ ...inputStyle, marginBottom: 20 }} />
+        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" style={{ ...inputStyle, marginBottom: 8 }} onKeyDown={e => e.key === "Enter" && handleAuth()} />
+        {!isSignUp && (
+          <div style={{ textAlign: "right", marginBottom: 16 }}>
+            <button onClick={() => setScreen("forgotPassword")} style={{ background: "none", border: "none", color: "rgba(255,107,53,0.7)", fontSize: 12, cursor: "pointer", padding: 0 }}>Forgot password?</button>
+          </div>
+        )}
         <button onClick={handleAuth} disabled={loading} style={btnPrimary}>{loading ? "..." : isSignUp ? "Create Account" : "Sign In"}</button>
         <button onClick={() => setIsSignUp(!isSignUp)} style={btnSecondary}>{isSignUp ? "Already have an account? Sign in" : "New here? Create account"}</button>
       </div>
     </div>
   );
 
+  // ── MANAGE HABITS ───────────────────────────────────────────────────────────
   if (showManageHabits) return (
     <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
       {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "rgba(30,30,40,0.97)", color: "white", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
@@ -616,6 +668,7 @@ export default function Home() {
     </div>
   );
 
+  // ── GROUP CHECK-IN ──────────────────────────────────────────────────────────
   if (showGroupCheckin && currentGroup) return (
     <div style={{ minHeight: "100vh", background: "#0F0F18", fontFamily: "system-ui, sans-serif", color: "white" }}>
       {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: "rgba(30,30,40,0.97)", color: "white", padding: "10px 20px", borderRadius: 100, fontSize: 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap" }}>{toast}</div>}
@@ -624,7 +677,12 @@ export default function Home() {
         <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>🐺 {currentGroup.group_name}</div>
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>Group check-in for today</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-          {groupCheckinHabits.map((h: any) => (
+          {groupCheckinHabits.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🏃</div>
+              No habits set for this group yet.
+            </div>
+          ) : groupCheckinHabits.map((h: any) => (
             <div key={h.id} onClick={() => toggleGroupCheckinHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: h.fromPersonal ? "default" : "pointer" }}>
               <div style={{ fontSize: 22 }}>{h.icon}</div>
               <div style={{ flex: 1 }}>
@@ -644,22 +702,190 @@ export default function Home() {
     </div>
   );
 
+  // ── HABIT PICKER COMPONENT ──────────────────────────────────────────────────
+  function HabitPicker({ selected, onToggle, onSave, onBack, title, subtitle, saveLabel }: any) {
+    return (
+      <div style={{ maxWidth: 430, margin: "0 auto", padding: "24px" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer", marginBottom: 16, padding: 0 }}>← Back</button>
+        <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>{title}</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>{subtitle}</div>
+        <div style={{ fontSize: 13, color: "#FF6B35", fontWeight: 600, marginBottom: 20 }}>{selected.length}/5 selected</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+          {presetHabits.map((h: any) => {
+            const sel = selected.includes(h.id);
+            return (
+              <div key={h.id} onClick={() => onToggle(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: sel ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (sel ? "rgba(78,205,196,0.3)" : "rgba(255,255,255,0.06)"), borderRadius: 16, padding: "12px 16px", cursor: "pointer", transition: "all 0.2s" }}>
+                <div style={{ fontSize: 22 }}>{h.icon}</div>
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{h.label}</div>
+                <div style={{ width: 22, height: 22, borderRadius: "50%", background: sel ? "#4ECDC4" : "transparent", border: "2px solid " + (sel ? "#4ECDC4" : "rgba(255,255,255,0.15)"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {sel && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {showAddCustom ? (
+          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Add custom habit</div>
+            <input value={customHabitIcon} onChange={e => setCustomHabitIcon(e.target.value)} placeholder="Icon (emoji)" style={{ ...inputStyle, marginBottom: 8 }} />
+            <input value={customHabitLabel} onChange={e => setCustomHabitLabel(e.target.value)} placeholder="Habit name" style={inputStyle} />
+            <button onClick={() => setShowAddCustom(false)} style={btnSecondary}>Done</button>
+          </div>
+        ) : selected.length < 5 && <button onClick={() => setShowAddCustom(true)} style={{ ...btnSecondary, marginBottom: 16 }}>+ Add custom habit</button>}
+        <button onClick={() => onSave(selected)} disabled={selected.length === 0 && !customHabitLabel.trim()} style={{ ...btnPrimary, opacity: selected.length === 0 && !customHabitLabel.trim() ? 0.4 : 1 }}>{saveLabel}</button>
+      </div>
+    );
+  }
+
+  // ── MAIN APP ────────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: "#0A0A0F", fontFamily: "system-ui, sans-serif", color: "white", display: "flex", justifyContent: "center" }}>
       <div style={{ width: "100%", maxWidth: 430, position: "relative", minHeight: "100vh", background: "#0F0F18", paddingBottom: 80, overflow: "hidden" }}>
-        {showMemberProfile && <MemberProfile />}
+
+        {/* MEMBER PROFILE MODAL */}
+        {showMemberProfile && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowMemberProfile(false)}>
+            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 430, background: "#161620", borderRadius: "28px 28px 0 0", padding: "28px 24px 48px", maxHeight: "80vh", overflowY: "auto" }}>
+              <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, margin: "0 auto 24px" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
+                <div style={{ width: 64, height: 64, borderRadius: 20, background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 26, color: "white" }}>
+                  {selectedMember?.displayName?.[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 800 }}>{selectedMember?.displayName}{selectedMember?.isMe ? " (you)" : ""}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{selectedMember?.checkedInToday ? "✅ Checked in today" : "⏳ Not checked in yet"}</div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+                <div style={{ background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 18, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#FF6B35" }}>{memberStreak} {streakEmoji(memberStreak)}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Personal Streak</div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#4ECDC4" }}>{selectedMember?.streak} {streakEmoji(selectedMember?.streak || 0)}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Group Streak</div>
+                </div>
+              </div>
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Daily Habits</div>
+                {memberHabits.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {memberHabits.map((h: any) => (
+                      <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, padding: "10px 14px" }}>
+                        <span style={{ fontSize: 20 }}>{h.icon}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>{h.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: "16px 0" }}>No habits set yet</div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Awards</div>
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.1)", borderRadius: 16, padding: "20px", textAlign: "center" }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>🏆</div>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>Awards coming soon!</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 4 }}>Earn badges for streaks, consistency & more</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* NOTIFICATIONS PANEL */}
+        {showNotifications && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowNotifications(false)}>
+            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 430, background: "#161620", borderRadius: "28px 28px 0 0", padding: "28px 24px 48px", maxHeight: "70vh", overflowY: "auto" }}>
+              <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, margin: "0 auto 24px" }} />
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Notifications 🔔</div>
+              {notifications.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>🐺</div>
+                  All quiet. Keep grinding!
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {notifications.map((n: any) => (
+                    <div key={n.id} style={{ display: "flex", alignItems: "center", gap: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: "14px 16px" }}>
+                      <div style={{ fontSize: 24, width: 44, height: 44, background: "rgba(255,107,53,0.1)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{n.icon}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.4 }}>{n.text}</div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{n.time}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SETTINGS PANEL */}
+        {showSettings && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowSettings(false)}>
+            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 430, background: "#161620", borderRadius: "28px 28px 0 0", padding: "28px 24px 48px", maxHeight: "85vh", overflowY: "auto" }}>
+              <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, margin: "0 auto 24px" }} />
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24 }}>Settings ⚙️</div>
+
+              {/* Edit name */}
+              <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: 18, marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Edit Profile</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 8 }}>Current name: <span style={{ color: "white" }}>{user?.user_metadata?.name || "Not set"}</span></div>
+                <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="New display name" style={{ ...inputStyle, marginBottom: 8 }} />
+                <button onClick={handleEditName} disabled={editNameSaving || !editName.trim()} style={{ ...btnPrimary, marginBottom: 0, opacity: editName.trim() ? 1 : 0.4, fontSize: 13, padding: "10px" }}>
+                  {editNameSaving ? "Saving..." : "Update Name"}
+                </button>
+              </div>
+
+              {/* Change password */}
+              <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: 18, marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Change Password</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 12 }}>We'll send a reset link to your email.</div>
+                <button onClick={async () => {
+                  setLoading(true);
+                  const { error } = await supabase.auth.resetPasswordForEmail(user.email, { redirectTo: "https://packd-two.vercel.app" });
+                  setLoading(false);
+                  if (!error) { triggerToast("📧 Reset link sent to " + user.email); setShowSettings(false); }
+                  else triggerToast("❌ " + error.message);
+                }} style={{ ...btnSecondary, fontSize: 13 }}>Send Reset Link 📧</button>
+              </div>
+
+              {/* App info */}
+              <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: 18, marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>About</div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", lineHeight: 1.7 }}>
+                  PACKD 🐺<br />
+                  <span style={{ fontSize: 11 }}>Group accountability, built different.</span><br />
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>v1.0 — Early Access</span>
+                </div>
+              </div>
+
+              {/* Sign out */}
+              <button onClick={() => { setShowSettings(false); handleSignOut(); }} style={{ width: "100%", padding: 16, background: "rgba(255,62,108,0.1)", border: "1px solid rgba(255,62,108,0.2)", borderRadius: 16, color: "#FF3E6C", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign Out</button>
+            </div>
+          </div>
+        )}
+
         {confetti.map(c => (
           <div key={c.id} style={{ position: "fixed", top: "-10px", left: c.x + "%", width: 8, height: 8, background: c.color, borderRadius: 2, zIndex: 1000, animation: `fall 2.5s ${c.delay}s ease-in forwards`, pointerEvents: "none" }} />
         ))}
-        <style>{`@keyframes fall { 0% { transform: translateY(0) rotate(0deg); opacity:1; } 100% { transform: translateY(100vh) rotate(720deg); opacity:0; } } @keyframes popIn { 0% { transform: translateX(-50%) scale(0.7); opacity:0; } 60% { transform: translateX(-50%) scale(1.08); } 100% { transform: translateX(-50%) scale(1); opacity:1; } } @keyframes slideUp { 0% { transform: translateX(-50%) translateY(20px); opacity:0; } 100% { transform: translateX(-50%) translateY(0); opacity:1; } } @keyframes slideUpSheet { 0% { transform: translateY(100%); } 100% { transform: translateY(0); } }`}</style>
+        <style>{`@keyframes fall { 0% { transform: translateY(0) rotate(0deg); opacity:1; } 100% { transform: translateY(100vh) rotate(720deg); opacity:0; } } @keyframes popIn { 0% { transform: translateX(-50%) scale(0.7); opacity:0; } 60% { transform: translateX(-50%) scale(1.08); } 100% { transform: translateX(-50%) scale(1); opacity:1; } } @keyframes slideUp { 0% { transform: translateX(-50%) translateY(20px); opacity:0; } 100% { transform: translateX(-50%) translateY(0); opacity:1; } }`}</style>
 
         {showToast && <div style={{ position: "fixed", top: 24, left: "50%", transform: "translateX(-50%)", background: toastBig ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "rgba(30,30,40,0.97)", color: "white", padding: toastBig ? "16px 28px" : "10px 20px", borderRadius: 100, fontSize: toastBig ? 15 : 13, fontWeight: 700, zIndex: 999, whiteSpace: "nowrap", boxShadow: toastBig ? "0 8px 32px rgba(255,107,53,0.4)" : "0 4px 16px rgba(0,0,0,0.3)", animation: "slideUp 0.3s ease" }}>{toast}</div>}
         {showHomePopup && <div style={{ position: "fixed", top: 80, left: "50%", background: "rgba(255,107,53,0.15)", border: "1px solid rgba(255,107,53,0.3)", backdropFilter: "blur(12px)", color: "white", padding: "10px 20px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 998, whiteSpace: "nowrap", animation: "popIn 0.3s ease" }}>{homePopup}</div>}
 
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 24px 8px", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-          <span>9:41</span><span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span><span>●●●</span>
+        {/* TOP BAR */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px 8px", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+          <span style={{ fontSize: 11 }}>{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          <span style={{ fontWeight: 700, color: "#FF6B35", fontSize: 13 }}>PACKD</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { generateNotifications(); setShowNotifications(true); }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, padding: "2px 4px", color: "rgba(255,255,255,0.5)", lineHeight: 1 }}>🔔</button>
+            <button onClick={() => setShowSettings(true)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, padding: "2px 4px", color: "rgba(255,255,255,0.5)", lineHeight: 1 }}>⚙️</button>
+          </div>
         </div>
 
+        {/* ── HOME TAB ──────────────────────────────────────────────────────────── */}
         {activeTab === "home" && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -669,7 +895,7 @@ export default function Home() {
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{greeting.emoji} {greeting.line}</div>
             </div>
 
-            {/* First visit nudge banner */}
+            {/* First visit nudge */}
             {isFirstVisit && (
               <div style={{ margin: "0 20px 20px", background: "linear-gradient(135deg, rgba(78,205,196,0.12), rgba(78,205,196,0.06))", border: "1px solid rgba(78,205,196,0.25)", borderRadius: 20, padding: "16px 18px" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>👇 Day 1 starts NOW</div>
@@ -681,6 +907,7 @@ export default function Home() {
               </div>
             )}
 
+            {/* Streak card */}
             <div style={{ margin: "0 20px 20px", background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", borderRadius: 28, padding: 24 }}>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.8, fontWeight: 600 }}>Personal Streak</div>
               <div style={{ fontSize: 60, fontWeight: 800, lineHeight: 1 }}>{personalStreak}</div>
@@ -695,12 +922,21 @@ export default function Home() {
                 ))}
               </div>
             </div>
+
+            {/* Today's habits */}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "0 24px", marginBottom: 12 }}>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Today's Habits</div>
               <div style={{ fontSize: 12, color: "#FF6B35" }}>{doneCount}/{habits.length} done</div>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-              {habits.map((h) => (
+              {habits.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "32px 20px", background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.08)", borderRadius: 20 }}>
+                  <div style={{ fontSize: 36, marginBottom: 10 }}>🌱</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>No habits yet</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 16 }}>Set up your daily habits to start tracking</div>
+                  <button onClick={() => { setSelectedPresets([]); setShowManageHabits(true); }} style={{ background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", padding: "10px 20px" }}>Add Habits →</button>
+                </div>
+              ) : habits.map((h) => (
                 <div key={h.id} onClick={() => toggleHabit(h.id, true)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: checkInType === "full" ? "default" : "pointer", transition: "all 0.2s ease" }}>
                   <div style={{ fontSize: 22, width: 44, height: 44, background: h.checked ? "rgba(78,205,196,0.15)" : "rgba(255,255,255,0.06)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>{h.icon}</div>
                   <div style={{ flex: 1 }}>
@@ -713,6 +949,8 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            {/* Pack preview */}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "0 24px", marginBottom: 12 }}>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Your Pack</div>
               <button onClick={() => setActiveTab("group")} style={{ fontSize: 12, color: "#FF6B35", background: "none", border: "none", cursor: "pointer" }}>See all →</button>
@@ -727,14 +965,17 @@ export default function Home() {
                 <div style={{ fontSize: 11, color: "#FF6B35", fontWeight: 600 }}>Code: {currentGroup.invite_code} · Tap to view →</div>
               </div>
             ) : (
-              <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: 20, textAlign: "center" }}>
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 12 }}>No pack yet — create or join one!</div>
-                <button onClick={() => setActiveTab("group")} style={{ ...btnPrimary, width: "auto", padding: "10px 20px", marginBottom: 0 }}>Get Started →</button>
+              <div style={{ margin: "0 20px 24px", background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.08)", borderRadius: 18, padding: 24, textAlign: "center" }}>
+                <div style={{ fontSize: 36, marginBottom: 10 }}>🐺</div>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>No pack yet</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 16 }}>Accountability is better together</div>
+                <button onClick={() => setActiveTab("group")} style={{ background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", padding: "10px 20px" }}>Create or Join →</button>
               </div>
             )}
           </div>
         )}
 
+        {/* ── PACK TAB ──────────────────────────────────────────────────────────── */}
         {activeTab === "group" && !showGroupDetail && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -801,14 +1042,17 @@ export default function Home() {
               </div>
             )}
             {groups.length === 0 && !showCreateGroup && !showJoinGroup && (
-              <div style={{ textAlign: "center", padding: "40px 20px", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>🐺</div>
-                No groups yet. Create one and invite your friends!
+              <div style={{ textAlign: "center", padding: "48px 32px", color: "rgba(255,255,255,0.3)" }}>
+                <div style={{ fontSize: 56, marginBottom: 16 }}>🐺</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "white", marginBottom: 8 }}>No pack yet</div>
+                <div style={{ fontSize: 13, marginBottom: 24, lineHeight: 1.6 }}>Create a group and invite your friends. The real accountability starts here.</div>
+                <button onClick={() => setShowCreateGroup(true)} style={{ background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 700, cursor: "pointer", padding: "14px 28px" }}>Create Your Pack 🐺</button>
               </div>
             )}
           </div>
         )}
 
+        {/* ── GROUP DETAIL ──────────────────────────────────────────────────────── */}
         {activeTab === "group" && showGroupDetail && currentGroup && (
           <div>
             <div style={{ padding: "8px 24px 20px" }}>
@@ -826,6 +1070,12 @@ export default function Home() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+            {groupHabits.length === 0 && (
+              <div style={{ margin: "0 20px 12px", background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.08)", borderRadius: 18, padding: "20px", textAlign: "center" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>🏃</div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.35)" }}>No group habits set yet.</div>
               </div>
             )}
             <div style={{ margin: "0 20px 12px", display: "flex", gap: 10 }}>
@@ -862,8 +1112,13 @@ export default function Home() {
             <div style={{ padding: "0 24px", marginBottom: 12 }}>
               <div style={{ fontSize: 17, fontWeight: 700 }}>Leaderboard 🏆</div>
             </div>
-            <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {[...groupMembers].sort((a, b) => b.streak - a.streak).map((m, i) => (
+            <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {groupMembers.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>👥</div>
+                  No members yet. Share your code!
+                </div>
+              ) : [...groupMembers].sort((a, b) => b.streak - a.streak).map((m, i) => (
                 <div key={m.user_id} onClick={() => loadMemberProfile(m)} style={{ display: "flex", alignItems: "center", gap: 12, background: i === 0 ? "linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,62,108,0.08))" : "rgba(255,255,255,0.04)", border: "1px solid " + (i === 0 ? "rgba(255,107,53,0.2)" : "rgba(255,255,255,0.05)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer" }}>
                   <div style={{ fontSize: 16, fontWeight: 800, width: 24, textAlign: "center" }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</div>
                   <div style={{ width: 40, height: 40, borderRadius: 13, background: COLORS[i % COLORS.length], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#0F0F18" }}>{m.displayName[0]}</div>
@@ -881,6 +1136,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* ── CHECK-IN TAB ──────────────────────────────────────────────────────── */}
         {activeTab === "checkin" && (
           <div>
             <div style={{ margin: "8px 20px 20px", background: hype && isFull ? "linear-gradient(135deg, #FF6B35, #FF3E6C)" : "linear-gradient(135deg, #1A1A2E, #16213E)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 28, padding: "28px 24px", textAlign: "center", transition: "all 0.4s ease" }}>
@@ -900,7 +1156,14 @@ export default function Home() {
               </svg>
             </div>
             <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-              {habits.map((h) => {
+              {habits.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "32px 20px", background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.08)", borderRadius: 20 }}>
+                  <div style={{ fontSize: 36, marginBottom: 10 }}>🌱</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>No habits set yet</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 16 }}>Head to your profile to add daily habits</div>
+                  <button onClick={() => setActiveTab("profile")} style={{ background: "linear-gradient(135deg, #FF6B35, #FF3E6C)", border: "none", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", padding: "10px 20px" }}>Set Up Habits →</button>
+                </div>
+              ) : habits.map((h) => {
                 const isGroupHabit = groupHabits.some(gh => gh.label === h.label);
                 return (
                   <div key={h.id} onClick={() => toggleHabit(h.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: h.checked ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.04)", border: "1px solid " + (h.checked ? "rgba(78,205,196,0.2)" : "rgba(255,255,255,0.06)"), borderRadius: 18, padding: "14px 16px", cursor: "pointer", transition: "all 0.2s ease" }}>
@@ -924,6 +1187,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* ── PROFILE TAB ───────────────────────────────────────────────────────── */}
         {activeTab === "profile" && (
           <div>
             <div style={{ padding: "8px 24px 24px", display: "flex", gap: 16, alignItems: "center" }}>
@@ -955,12 +1219,20 @@ export default function Home() {
               }} style={{ width: "100%", padding: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>
                 ✏️ Manage My Habits
               </button>
-              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.1)", borderRadius: 20, padding: "20px", marginBottom: 10 }}><div style={{ fontSize: 11, fontWeight: 700, marginBottom: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.08em" }}>🏆 Awards</div><div style={{ textAlign: "center", padding: "12px 0" }}><div style={{ fontSize: 36, marginBottom: 8 }}>🏆</div><div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>Awards coming soon!</div><div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>Earn badges for streaks, consistency &amp; more</div></div></div>
+
+              {/* Awards placeholder */}
+              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.08)", borderRadius: 16, padding: "20px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>🏆</div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Awards coming soon!</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Earn badges for streaks, consistency & more</div>
+              </div>
+
               <button onClick={handleSignOut} style={{ width: "100%", padding: 16, background: "rgba(255,62,108,0.1)", border: "1px solid rgba(255,62,108,0.2)", borderRadius: 16, color: "#FF3E6C", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Sign Out</button>
             </div>
           </div>
         )}
 
+        {/* BOTTOM NAV */}
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, height: 80, background: "rgba(15,15,24,0.97)", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-around", paddingBottom: 12, zIndex: 100 }}>
           {[{ id: "home", icon: "🏠", label: "Home" }, { id: "group", icon: "👥", label: "Pack" }, { id: "checkin", icon: "✅", label: "Check In" }, { id: "profile", icon: "👤", label: "Profile" }].map((tab) => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id !== "group") setShowGroupDetail(false); }} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab.id ? "#FF6B35" : "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 500, padding: "8px 16px", borderRadius: 16, backgroundColor: activeTab === tab.id ? "rgba(255,107,53,0.1)" : "transparent" }}>
