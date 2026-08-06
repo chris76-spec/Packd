@@ -1,0 +1,10 @@
+{
+  "name": "Anjaneya Bois",
+  "short_name": "AnjBois",
+  "description": "Private two-person total-fitness rivalry",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#131312",
+  "theme_color": "#131312",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
